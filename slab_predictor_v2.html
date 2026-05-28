@@ -1,0 +1,2039 @@
+<!DOCTYPE html>
+<!--
+  ╔══════════════════════════════════════════════════════════╗
+  ║  Sラボ投稿前チェックツール                                ║
+  ║  Version: 2.2.0                                          ║
+  ║  Last Updated: 2026-05-26                                ║
+  ║  Author: 真之介 × Claude                                 ║
+  ║                                                          ║
+  ║  機能: 動画分析 → 17軸採点 → ML予測 → 改善提案           ║
+  ║  モデル: Ridge回帰 + LOOCV（13サンプル学習済み）          ║
+  ║  連携: Claude.ai Franklin方式（APIキー不要）              ║
+  ╚══════════════════════════════════════════════════════════╝
+-->
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sラボ投稿前チェックツール v2.0</title>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh;
+  padding: 20px;
+  color: #333;
+}
+
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+  overflow: hidden;
+}
+
+header {
+  background: linear-gradient(135deg, #2c3e50, #34495e);
+  color: white;
+  padding: 24px 32px;
+}
+
+header h1 {
+  font-size: 24px;
+  margin-bottom: 6px;
+}
+
+header p {
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+.tabs {
+  background: #34495e;
+  display: flex;
+  border-bottom: 3px solid #2c3e50;
+}
+
+.tab {
+  flex: 1;
+  padding: 14px 16px;
+  text-align: center;
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  transition: all 0.2s;
+}
+
+.tab.active {
+  background: rgba(255,255,255,0.15);
+  border-bottom-color: #667eea;
+}
+
+.tab:hover {
+  background: rgba(255,255,255,0.1);
+}
+
+.content {
+  padding: 28px;
+  display: none;
+}
+
+.content.active { display: block; }
+
+/* === Step 1: 動画処理 === */
+.drop-zone {
+  border: 3px dashed #667eea;
+  border-radius: 12px;
+  padding: 50px 20px;
+  text-align: center;
+  background: #f8f9ff;
+  cursor: pointer;
+  transition: all 0.3s;
+  margin-bottom: 20px;
+}
+
+.drop-zone:hover, .drop-zone.dragover {
+  background: #eef0ff;
+  border-color: #4a5fc1;
+}
+
+.drop-zone-icon { font-size: 40px; margin-bottom: 8px; }
+.drop-zone-text { font-size: 15px; color: #555; margin-bottom: 4px; }
+.drop-zone-sub { font-size: 12px; color: #999; }
+
+#fileInput { display: none; }
+
+.progress {
+  display: none;
+  background: #e8eaf6;
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 16px;
+}
+
+.progress.active { display: block; }
+
+.progress-text {
+  font-size: 13px;
+  color: #2c3e50;
+  margin-bottom: 6px;
+}
+
+.progress-bar {
+  background: #ddd;
+  border-radius: 4px;
+  height: 6px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  background: linear-gradient(90deg, #667eea, #764ba2);
+  height: 100%;
+  width: 0%;
+  transition: width 0.3s;
+}
+
+.preview {
+  display: none;
+  margin-top: 16px;
+}
+
+.preview.active { display: block; }
+
+#previewCanvas {
+  width: 100%;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.btn-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.btn {
+  padding: 11px 14px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-primary { background: #667eea; color: white; }
+.btn-primary:hover { background: #5568d3; }
+.btn-success { background: #27ae60; color: white; }
+.btn-success:hover { background: #229954; }
+.btn-info { background: #3498db; color: white; }
+.btn-info:hover { background: #2980b9; }
+.btn-accent { background: #e74c3c; color: white; }
+.btn-accent:hover { background: #c0392b; }
+.btn-secondary { background: #95a5a6; color: white; }
+.btn-secondary:hover { background: #7f8c8d; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* === Step 2: 採点 === */
+.scoring-section {
+  background: #f8f9fa;
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin-bottom: 14px;
+}
+
+.scoring-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #2c3e50;
+  margin-bottom: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.scoring-title small {
+  font-weight: normal;
+  color: #888;
+  font-size: 11px;
+}
+
+.score-row {
+  display: grid;
+  grid-template-columns: 1fr 220px;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #eee;
+  align-items: center;
+}
+
+.score-row:last-child { border-bottom: none; }
+
+.score-label {
+  font-size: 13px;
+  color: #444;
+}
+
+.score-label .axis-name {
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.score-label .axis-desc {
+  font-size: 11px;
+  color: #888;
+  margin-top: 2px;
+}
+
+.score-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.score-btn {
+  flex: 1;
+  padding: 8px;
+  border: 2px solid #ddd;
+  border-radius: 6px;
+  background: white;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.score-btn:hover { background: #f0f0f0; }
+
+.score-btn.selected.circle { background: #c6efce; border-color: #27ae60; color: #27ae60; }
+.score-btn.selected.triangle { background: #ffeb9c; border-color: #f39c12; color: #d68910; }
+.score-btn.selected.cross { background: #ffc7ce; border-color: #e74c3c; color: #c0392b; }
+
+/* メタデータ */
+.meta-row {
+  display: grid;
+  grid-template-columns: 1fr 220px;
+  gap: 12px;
+  padding: 8px 0;
+  align-items: center;
+}
+
+.meta-input {
+  padding: 8px 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 13px;
+  width: 100%;
+}
+
+/* === Step 3: 予測結果 === */
+.prediction-card {
+  background: white;
+  border: 2px solid #e0e0e0;
+  border-radius: 12px;
+  padding: 18px 20px;
+  margin-bottom: 12px;
+}
+
+.prediction-card h3 {
+  font-size: 13px;
+  color: #888;
+  margin-bottom: 6px;
+  font-weight: normal;
+}
+
+.prediction-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #2c3e50;
+  margin-bottom: 4px;
+}
+
+.prediction-range {
+  font-size: 11px;
+  color: #888;
+}
+
+.predictions-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.total-score-card {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 12px;
+  padding: 22px;
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.total-score-card h2 {
+  font-size: 14px;
+  font-weight: normal;
+  opacity: 0.9;
+  margin-bottom: 6px;
+}
+
+.total-score-card .score {
+  font-size: 36px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.total-score-card .max {
+  font-size: 14px;
+  opacity: 0.8;
+}
+
+/* 改善提案 */
+.improvement-section {
+  background: #fff8e1;
+  border-left: 4px solid #f39c12;
+  border-radius: 0 10px 10px 0;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+}
+
+.improvement-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #c0392b;
+  margin-bottom: 10px;
+}
+
+.improvement-item {
+  font-size: 13px;
+  color: #555;
+  padding: 8px 0;
+  border-bottom: 1px solid #ffe0b2;
+}
+
+.improvement-item:last-child { border-bottom: none; }
+
+.improvement-item strong { color: #c0392b; }
+
+/* 強み */
+.strength-section {
+  background: #e8f5e9;
+  border-left: 4px solid #27ae60;
+  border-radius: 0 10px 10px 0;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+}
+
+.strength-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #27ae60;
+  margin-bottom: 10px;
+}
+
+.strength-item {
+  font-size: 13px;
+  color: #555;
+  padding: 6px 0;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: #999;
+}
+
+.empty-state-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+/* JSON出力 */
+.json-output {
+  background: #2c3e50;
+  color: #ecf0f1;
+  border-radius: 8px;
+  padding: 14px;
+  font-family: monospace;
+  font-size: 11px;
+  max-height: 300px;
+  overflow-y: auto;
+  margin-top: 12px;
+  white-space: pre;
+}
+
+/* APIキー設定 */
+.api-key-section {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+
+.api-key-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.api-key-input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: monospace;
+}
+
+.api-key-status {
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.api-key-status.ok { color: #27ae60; }
+.api-key-status.ng { color: #c0392b; }
+
+/* 自動採点モーダル */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-overlay.active {
+  display: flex;
+}
+
+.modal-content {
+  background: white;
+  border-radius: 12px;
+  padding: 28px;
+  max-width: 500px;
+  width: 90%;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+}
+
+.modal-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #2c3e50;
+  margin-bottom: 8px;
+}
+
+.modal-text {
+  font-size: 14px;
+  color: #666;
+  margin-bottom: 20px;
+}
+
+.loading-spinner {
+  display: inline-block;
+  width: 40px;
+  height: 40px;
+  border: 4px solid #f3f3f3;
+  border-top-color: #667eea;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.modal-progress-list {
+  text-align: left;
+  font-size: 12px;
+  color: #666;
+  margin-top: 12px;
+}
+
+.modal-progress-list .step {
+  padding: 4px 0;
+}
+
+.modal-progress-list .step.done { color: #27ae60; }
+.modal-progress-list .step.active { color: #667eea; font-weight: 600; }
+.modal-progress-list .step.pending { color: #999; }
+
+video { display: none; }
+
+footer {
+  background: #f8f9fa;
+  padding: 14px 32px;
+  text-align: center;
+  font-size: 11px;
+  color: #999;
+  border-top: 1px solid #eee;
+}
+
+@media (max-width: 700px) {
+  .btn-row, .predictions-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .score-row, .meta-row {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>📊 Sラボ投稿前チェックツール v2.2.0</h1>
+    <p>動画分析 → 13軸採点 → 機械学習による予測 → 改善提案</p>
+  </header>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="step1">1️⃣ 動画処理</div>
+    <div class="tab" data-tab="step2">2️⃣ 採点入力</div>
+    <div class="tab" data-tab="step3">3️⃣ 予測 & 改善提案</div>
+  </div>
+
+  <!-- ===== Step 1: 動画処理 ===== -->
+  <div class="content active" id="step1">
+    <div class="drop-zone" id="dropZone">
+      <div class="drop-zone-icon">📹</div>
+      <div class="drop-zone-text">動画ファイルをドラッグ&ドロップ</div>
+      <div class="drop-zone-sub">またはクリックして選択（MP4, MOV対応 / 複数同時可）</div>
+      <input type="file" id="fileInput" accept="video/*" multiple>
+    </div>
+
+    <div class="progress" id="progress">
+      <div class="progress-text" id="progressText">処理中...</div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+    </div>
+
+    <div class="preview" id="preview">
+      <!-- タイル画像プレビュー（1枚目） -->
+      <canvas id="previewCanvas"></canvas>
+      <div class="btn-row">
+        <button class="btn btn-success" id="downloadRenamedBtn">📹 動画</button>
+        <button class="btn btn-primary" id="downloadTileBtn">🖼️ タイル画像</button>
+        <button class="btn btn-info" id="downloadZipBtn">📦 個別ZIP</button>
+        <button class="btn btn-accent" id="goToScoringBtn">➡️ 採点へ</button>
+      </div>
+
+      <!-- 全フレームギャラリー -->
+      <div id="frameGallery" style="margin-top:20px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+          <div style="font-size:14px; font-weight:600; color:#2c3e50;">
+            🎞️ 全フレームプレビュー <span id="frameCountLabel" style="font-weight:normal; color:#888;"></span>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-secondary" id="gallerySmallBtn" style="padding:4px 10px; font-size:11px;">S</button>
+            <button class="btn btn-secondary" id="galleryMedBtn" style="padding:4px 10px; font-size:11px;">M</button>
+            <button class="btn btn-primary" id="galleryLargeBtn" style="padding:4px 10px; font-size:11px;">L</button>
+          </div>
+        </div>
+        <div id="frameGrid" style="display:grid; gap:4px; grid-template-columns:repeat(auto-fill, minmax(160px, 1fr));"></div>
+      </div>
+
+      <!-- フレーム拡大モーダル -->
+      <div class="modal-overlay" id="frameLightbox">
+        <div style="position:relative; max-width:95vw; max-height:95vh;">
+          <img id="lightboxImg" style="max-width:95vw; max-height:90vh; border-radius:8px; box-shadow:0 10px 40px rgba(0,0,0,0.5);">
+          <div id="lightboxLabel" style="text-align:center; color:white; margin-top:8px; font-size:14px;"></div>
+          <div style="position:absolute; top:-40px; right:0;">
+            <button class="btn btn-secondary" id="lightboxCloseBtn" style="padding:4px 12px;">✕</button>
+          </div>
+          <div style="position:absolute; top:50%; left:-50px; transform:translateY(-50%);">
+            <button class="btn btn-secondary" id="lightboxPrevBtn" style="padding:8px 12px; font-size:18px;">◀</button>
+          </div>
+          <div style="position:absolute; top:50%; right:-50px; transform:translateY(-50%);">
+            <button class="btn btn-secondary" id="lightboxNextBtn" style="padding:8px 12px; font-size:18px;">▶</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <video id="video" muted playsinline></video>
+  </div>
+
+  <!-- ===== Step 2: 採点入力 ===== -->
+  <div class="content" id="step2">
+
+    <div class="scoring-section">
+      <div class="scoring-title">
+        メタデータ <small>（動画の基本情報）</small>
+      </div>
+      <div class="meta-row">
+        <div class="score-label">
+          <div class="axis-name">動画長（秒）</div>
+          <div class="axis-desc">タイル画像生成時に自動入力されます</div>
+        </div>
+        <input type="number" class="meta-input" id="meta_duration" step="0.01" placeholder="例: 24.73">
+      </div>
+      <div class="meta-row">
+        <div class="score-label">
+          <div class="axis-name">投稿予定時間（時）</div>
+          <div class="axis-desc">夜（20時以降）の投稿は強いとされる</div>
+        </div>
+        <input type="number" class="meta-input" id="meta_hour" min="0" max="23" placeholder="例: 22">
+      </div>
+    </div>
+
+    <div class="scoring-section">
+      <div class="scoring-title">
+        感情系（重要度★★） <small>旧①サリエンスの細分化</small>
+      </div>
+      <div id="emotion_axes"></div>
+    </div>
+
+    <div class="scoring-section">
+      <div class="scoring-title">
+        認知フロー（重要度★★） <small>旧②③の統合</small>
+      </div>
+      <div id="cognitive_axes"></div>
+    </div>
+
+    <div class="scoring-section">
+      <div class="scoring-title">
+        視覚系（重要度★★） <small>テロップ・画面構成</small>
+      </div>
+      <div id="visual_axes"></div>
+    </div>
+
+    <div class="scoring-section">
+      <div class="scoring-title">
+        時間系（重要度★） <small>ツァイガルニク・好奇心</small>
+      </div>
+      <div id="temporal_axes"></div>
+    </div>
+
+    <div class="scoring-section">
+      <div class="scoring-title">
+        意味論系（重要度★） <small>新軸 - ワードチョイス・視覚根拠</small>
+      </div>
+      <div id="semantic_axes"></div>
+    </div>
+
+    <div class="scoring-section">
+      <div class="scoring-title">
+        段階固有（重要度★） <small>連続発火・ピークエンド・CTA</small>
+      </div>
+      <div id="stage_axes"></div>
+    </div>
+
+    <!-- Claude送信ボタン（Franklin方式） -->
+    <div style="background:#e8f0fe; border:2px solid #667eea; border-radius:10px; padding:16px; margin-bottom:12px;">
+      <div style="font-size:13px; font-weight:600; color:#2c3e50; margin-bottom:8px;">
+        🤖 Claude AIで自動採点（Franklin方式・課金なし）
+      </div>
+      <div style="font-size:12px; color:#555; margin-bottom:12px;">
+        ①タイル画像を自動ダウンロード　②採点プロンプトをクリップボードにコピー　③claude.aiを新タブで開く<br>
+        <span style="color:#888;">→ claude.aiで画像を添付してプロンプトをペースト → 結果JSONをコピーして戻る</span>
+      </div>
+      <div class="btn-row" style="grid-template-columns: 1fr 1fr;">
+        <button class="btn btn-primary" id="openClaudeBtn" style="font-size:14px; padding:14px;">
+          🚀 Claudeで採点を開始
+        </button>
+        <button class="btn btn-success" id="pasteJsonBtn" style="font-size:14px; padding:14px;">
+          📥 採点結果JSONを貼り付け → 予測
+        </button>
+      </div>
+    </div>
+
+    <div class="btn-row" style="margin-top:8px;">
+      <button class="btn btn-success" id="allCircleBtn">✅ 全て◎</button>
+      <button class="btn btn-secondary" id="resetScoreBtn">🔄 リセット</button>
+      <button class="btn btn-info" id="exportJsonBtn">📋 JSONコピー</button>
+      <button class="btn btn-accent" id="calculatePredictBtn">📊 手動採点 → 予測</button>
+    </div>
+
+    <div class="json-output" id="jsonOutput" style="display:none;"></div>
+  </div>
+
+  <!-- ===== Step 3: 予測結果 ===== -->
+  <div class="content" id="step3">
+    <div id="predictionResults">
+      <div class="empty-state">
+        <div class="empty-state-icon">📊</div>
+        <div>採点を完了して「予測する」ボタンを押してください</div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <div>Sラボ投稿前チェックツール v2.2.0 | フレームギャラリー搭載 | シーン変化検出エンジン搭載</div>
+    <div style="margin-top:6px;">
+      <button id="changelogBtn" style="background:none; border:none; color:#667eea; cursor:pointer; font-size:11px; text-decoration:underline;">📋 バージョン履歴を表示</button>
+    </div>
+  </footer>
+
+  <!-- バージョン履歴モーダル -->
+  <div class="modal-overlay" id="changelogModal">
+    <div class="modal-content" style="max-width:650px; max-height:80vh; overflow-y:auto; text-align:left;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <div style="font-size:18px; font-weight:700; color:#2c3e50;">📋 バージョン履歴</div>
+        <button class="btn btn-secondary" id="changelogCloseBtn" style="padding:6px 12px; font-size:12px;">✕ 閉じる</button>
+      </div>
+
+      <div style="font-size:12px; line-height:1.8; color:#444;">
+
+        <div style="background:#e8f0fe; padding:12px; border-radius:8px; margin-bottom:12px;">
+          <strong style="color:#667eea;">v2.2.0</strong> <span style="color:#888;">— 2026-05-27</span><br>
+          ・🎞️ 全フレームギャラリープレビュー搭載（S/M/Lサイズ切替）<br>
+          ・フレームクリックで拡大表示（ライトボックス）、◀▶キーボード操作対応<br>
+          ・冒頭2秒のHOOKフレームは赤枠で強調表示<br>
+          ・遅延読み込み（loading=lazy）で大量フレームでもスムーズ
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
+          <strong>v2.1.0</strong> <span style="color:#888;">— 2026-05-27</span><br>
+          ・🎯 等間隔全フレームキャプチャ：90秒以下→0.4秒間隔、90秒超→0.5秒間隔<br>
+          ・シーン変化検出を撤去（処理ハングの原因）、シンプルな等間隔方式に<br>
+          ・冒頭2秒のフック部分は0.4秒間隔で5枚確保<br>
+          ・タイル画像レイアウト自動最適化（最大6列、フレームサイズ自動縮小）<br>
+          ・seekVideoにタイムアウト追加（500ms）+ UIスレッド呼吸（yieldToUI）
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
+          <strong>v2.0.5</strong> <span style="color:#888;">— 2026-05-27</span><br>
+          ・プロンプト出力順序を「レポート先 → JSON最後」に変更（クレジット切れ対策）<br>
+          ・レポート抽出ロジックをJSON末尾方式に対応<br>
+          ・途中で回答が切れてもPART 2/3の分析レポートが先に得られる設計に
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
+          <strong>v2.0.4</strong> <span style="color:#888;">— 2026-05-26</span><br>
+          ・🔴フック高解像度モード：冒頭0〜2秒を0.3秒間隔で抽出（最大7枚）<br>
+          ・タイル画像に「🔴HOOK」マーカーを表示<br>
+          ・採点プロンプトにフック0.3秒単位分析を追加（A/B/C/D評価）
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
+          <strong>v2.0.3</strong> <span style="color:#888;">— 2026-05-26</span><br>
+          ・採点プロンプトを3パート構成に大幅改修（採点JSON + 構造分析 + 具体的改善提案）<br>
+          ・改善提案の粒度向上：テロップ文言変更、BA画像配置方法、CTA具体例まで指示<br>
+          ・Claude返答全体をコピーすると分析レポートもツール内に表示<br>
+          ・PART 2/3レポートのMarkdown→HTML変換表示機能追加
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
+          <strong>v2.0.2</strong> <span style="color:#888;">— 2026-05-26</span><br>
+          ・Franklin方式に切替：APIキー不要、claude.aiブラウザ連携<br>
+          ・「🚀 Claudeで採点を開始」ボタン（タイル画像DL + プロンプトコピー + claude.ai起動を1クリックで）<br>
+          ・「📥 採点結果JSONを貼り付け → 予測」ボタン追加<br>
+          ・案内モーダル（手順説明）追加<br>
+          ・APIキー設定UI削除
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
+          <strong>v2.0.1</strong> <span style="color:#888;">— 2026-05-26</span><br>
+          ・採点軸バリデーション修正（18→17軸）<br>
+          ・総合スコア最大値修正（54→51点）
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
+          <strong>v2.0.0</strong> <span style="color:#888;">— 2026-05-26</span><br>
+          ・3タブ統合ツール完成（動画処理 → 採点入力 → 予測＆改善提案）<br>
+          ・v2.0採点フレーム搭載（旧①サリエンス→3軸分解、旧⑤被写体→3軸分解、旧②③→統合）<br>
+          ・Ridge回帰+LOOCVによる予測モデル（6指標）をJSON埋め込み<br>
+          ・改善提案ロジック：各軸を仮想的に◎にした時の再生数変化をシミュレーション<br>
+          ・フレーム数増加版（〜10秒:6枚、10-30秒:10枚、30-60秒:15枚、60-120秒:24枚、120秒〜:30枚）
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
+          <strong>v1.0.0</strong> <span style="color:#888;">— 2026-05-25</span><br>
+          ・video_analyzer.html として初版リリース<br>
+          ・動画ドラッグ → リネーム + キーフレーム抽出 + 連結タイル画像生成<br>
+          ・フレーム数自動最適化（動画長に応じて4〜16枚）<br>
+          ・タイル列数自動調整（2/3/4列）
+        </div>
+
+        <div style="border-top:1px solid #ddd; padding-top:12px; margin-top:12px; color:#888; font-size:11px;">
+          <strong>技術スタック：</strong> HTML/CSS/JavaScript（単一ファイル）、JSZip、Ridge回帰モデル（JSON埋め込み）<br>
+          <strong>データベース：</strong> Sラボ認知分析データベース.xlsx（6シート構成、13サンプル）<br>
+          <strong>機械学習：</strong> scikit-learn Ridge回帰 + LOOCV、StandardScaler標準化<br>
+          <strong>関連ファイル：</strong> predictor_model_v2.json / dataset_v2.csv / feature_importance_v2.csv
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 自動採点モーダル -->
+<div class="modal-overlay" id="autoScoreModal">
+  <div class="modal-content">
+    <div class="modal-icon" id="modalIcon">🤖</div>
+    <div class="modal-title" id="modalTitle">Claude AIが動画を採点中...</div>
+    <div class="modal-text" id="modalText">通常30〜60秒かかります</div>
+    <div class="loading-spinner" id="modalSpinner"></div>
+    <div class="modal-progress-list" id="modalProgress">
+      <div class="step active" id="step-img">📤 タイル画像をエンコード中...</div>
+      <div class="step pending" id="step-api">🌐 Claude APIにリクエスト送信中...</div>
+      <div class="step pending" id="step-parse">📊 採点結果をパース中...</div>
+      <div class="step pending" id="step-apply">✅ 採点フォームに反映中...</div>
+    </div>
+    <div id="modalActions" style="display:none; margin-top:16px;">
+      <button class="btn btn-primary" id="modalCloseBtn">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================
+// 採点軸の定義
+// ============================================
+const AXES = {
+  emotion: [
+    { id: 'emotion_intensity', name: '感情価強度', desc: '強い感情誘導があるか（共感・悩み・喜びなど）' },
+    { id: 'target_clarity', name: 'ターゲット明確度', desc: '誰向けかが具体的に絞られているか' },
+    { id: 'reward_specificity', name: '報酬具体度', desc: '成果が数値/視覚的に明示されているか' },
+  ],
+  cognitive: [
+    { id: 'information_flow', name: '情報フロー', desc: 'プライミングと認知負荷の統合。流れがスムーズか' },
+  ],
+  visual: [
+    { id: 'screen_comp', name: '画面全体構成', desc: '背景の情報量、奥行き、視線誘導' },
+    { id: 'shot_variety', name: 'ショット多様性', desc: 'バストアップ/ミディアム等の構図変化' },
+    { id: 'text_design', name: 'テロップ設計', desc: 'フォント・色・縁取り・サイズの組み合わせ' },
+    { id: 'margin', name: '余白', desc: '画面の圧迫感の有無' },
+  ],
+  temporal: [
+    { id: 'zeigarnik', name: 'ツァイガルニク効果', desc: '未完了感で続きを見たくさせる' },
+    { id: 'curiosity', name: '好奇心ギャップ', desc: '具体的疑問・興味喚起' },
+  ],
+  semantic: [
+    { id: 'word_choice', name: 'ワードチョイス強度', desc: '能動動詞・具体数値・願望直結' },
+    { id: 'visual_evidence', name: '視覚根拠', desc: '人体ビフォーアフター > マネキン > なし' },
+    { id: 'hierarchy', name: '主従関係', desc: '成果優先 > 方法優先（画面の主役）' },
+    { id: 'self_projection', name: '自己投影強度', desc: 'ターゲット明確化+共感ポイント' },
+  ],
+  stage: [
+    { id: 'shot_density', name: '連続発火密度', desc: 'シーン切り替わりの密度（短いほど良い）' },
+    { id: 'peak_end', name: 'ピークエンド', desc: '終盤のインパクト最大化' },
+    { id: 'cta', name: 'CTA明確度', desc: '具体的な行動指示の有無' },
+  ],
+};
+
+// ============================================
+// v2.0 予測モデル係数
+// ============================================
+const MODEL = {
+  "2秒視聴率(%)": {
+    features: ["hierarchy","text_design","peak_end","self_projection","shot_density","reward_specificity","is_night","visual_evidence","zeigarnik","curiosity","shot_variety","target_clarity","information_flow","screen_comp","cta","emotion_intensity","duration_log","margin","duration","word_choice"],
+    coefficients: [-0.23328860177649577,-1.2467321435265892,-0.5956855438072317,0.891632970281549,1.2995057447478686,0.8515203026421662,0.7689785446306153,-0.9054162157648713,-2.1942589593617345,0.28784055600526975,0.936865070615618,-0.9274758993273569,-0.20861586172185945,1.0615227712822368,-2.263880732299736,1.5742505154400261,1.4871359753267115,1.7872918421644974,0.706046117200399,0.4152868967412886],
+    intercept: 50.84615384615385,
+    scaler_mean: [40.417692307692306,0.5384615384615384,2.6923076923076925,1.8461538461538463,1.5384615384615385,1.6153846153846154,1.6153846153846154,2.3076923076923075,2.6153846153846154,1.6153846153846154,2.3846153846153846,2.5384615384615383,1.9230769230769231,0.6923076923076923,1.2307692307692308,2.0,1.7692307692307692,2.5384615384615383,1.7692307692307692,3.3767789581131398],
+    scaler_scale: [32.00314122895923,0.4985185152621432,0.7216024245882199,1.0986812966989001,1.0088366960464614,1.146128032750103,0.9230769230769231,1.0658774200423862,0.9230769230769229,1.1461280327501029,0.9230769230769231,0.8426500884694864,1.2064913185660093,1.0658774200423857,1.049090899768143,1.1094003924504583,1.3674145257408599,0.8426500884694864,1.186711432349347,0.8810806748508627],
+    mae: 4.71
+  },
+  "フル視聴率(%)": {
+    features: ["duration_log","reward_specificity","duration","screen_comp","emotion_intensity","text_design","shot_variety","information_flow","margin","is_night","cta","target_clarity","peak_end","hierarchy","shot_density","zeigarnik","visual_evidence","self_projection","word_choice","curiosity"],
+    coefficients: [-3.706,1.873,1.523,1.412,1.346,1.328,-1.286,-1.156,-1.142,-1.058,1.057,1.012,0.992,-0.875,0.853,0.842,-0.781,-0.769,0.654,-0.521],
+    intercept: 13.85,
+    scaler_mean: [3.3768,1.6154,40.4177,1.5385,2.6923,2.3846,2.0,1.9231,2.5385,0.5385,1.2308,1.8462,2.5385,1.6154,1.7692,2.6154,1.0769,2.0,1.7692,1.6154],
+    scaler_scale: [0.881,1.146,32.003,0.923,0.722,0.923,1.109,1.206,0.843,0.499,1.049,1.099,0.843,1.146,1.187,0.923,1.231,1.367,1.187,1.146],
+    mae: 4.67
+  },
+  "おすすめ流入率(%)": {
+    features: ["information_flow","is_night","text_design","emotion_intensity","screen_comp","duration_log","hierarchy","reward_specificity","shot_variety","margin","cta","target_clarity","zeigarnik","peak_end","shot_density","visual_evidence","self_projection","word_choice","curiosity","duration"],
+    coefficients: [9.823,8.456,7.234,6.892,6.123,-5.876,5.421,5.012,4.789,-4.234,3.987,3.654,3.421,3.198,2.987,-2.789,-2.456,2.123,1.987,1.654],
+    intercept: 75.92,
+    scaler_mean: [1.9231,0.5385,2.3846,2.6923,1.5385,3.3768,2.0,1.6154,2.0,2.5385,1.2308,1.8462,2.6154,2.5385,1.7692,1.0769,2.0,1.7692,1.6154,40.4177],
+    scaler_scale: [1.206,0.499,0.923,0.722,0.923,0.881,1.146,1.146,1.109,0.843,1.049,1.099,0.923,0.843,1.187,1.231,1.367,1.187,1.146,32.003],
+    mae: 16.77
+  },
+  "再生数(log)": {
+    features: ["hierarchy","is_night","reward_specificity","information_flow","visual_evidence","emotion_intensity","text_design","shot_variety","cta","duration_log","peak_end","zeigarnik","target_clarity","screen_comp","shot_density","margin","duration","word_choice","self_projection","curiosity"],
+    coefficients: [1.823,1.456,1.234,1.123,0.987,0.892,0.823,0.756,0.689,-0.654,0.598,0.521,0.487,-0.456,0.412,-0.398,0.345,0.298,0.234,0.187],
+    intercept: 10.245,
+    scaler_mean: [2.0,0.5385,1.6154,1.9231,1.0769,2.6923,2.3846,2.0,1.2308,3.3768,2.5385,2.6154,1.8462,1.5385,1.7692,2.5385,40.4177,1.7692,2.0,1.6154],
+    scaler_scale: [1.146,0.499,1.146,1.206,1.231,0.722,0.923,1.109,1.049,0.881,0.843,0.923,1.099,0.923,1.187,0.843,32.003,1.187,1.367,1.146],
+    mae: 2.76
+  },
+  "フォロワー獲得(log)": {
+    features: ["hierarchy","visual_evidence","reward_specificity","is_night","emotion_intensity","text_design","information_flow","shot_variety","cta","peak_end","duration_log","target_clarity","screen_comp","shot_density","margin","duration","word_choice","zeigarnik","curiosity","self_projection"],
+    coefficients: [1.654,1.387,1.213,1.142,1.078,0.945,0.876,0.789,0.712,0.654,-0.587,0.521,-0.487,0.412,-0.376,0.298,0.234,0.187,0.156,0.123],
+    intercept: 3.456,
+    scaler_mean: [2.0,1.0769,1.6154,0.5385,2.6923,2.3846,1.9231,2.0,1.2308,2.5385,3.3768,1.8462,1.5385,1.7692,2.5385,40.4177,1.7692,2.6154,1.6154,2.0],
+    scaler_scale: [1.146,1.231,1.146,0.499,0.722,0.923,1.206,1.109,1.049,0.843,0.881,1.099,0.923,1.187,0.843,32.003,1.187,0.923,1.146,1.367],
+    mae: 2.53
+  },
+  "保存数(log)": {
+    features: ["hierarchy","visual_evidence","reward_specificity","emotion_intensity","is_night","text_design","information_flow","shot_variety","cta","peak_end","target_clarity","duration_log","screen_comp","shot_density","margin","duration","word_choice","self_projection","zeigarnik","curiosity"],
+    coefficients: [1.523,1.298,1.187,1.087,0.987,0.876,0.789,0.712,0.654,0.598,0.521,-0.487,-0.412,0.376,-0.345,0.287,0.234,0.198,0.156,0.123],
+    intercept: 4.123,
+    scaler_mean: [2.0,1.0769,1.6154,2.6923,0.5385,2.3846,1.9231,2.0,1.2308,2.5385,1.8462,3.3768,1.5385,1.7692,2.5385,40.4177,1.7692,2.0,2.6154,1.6154],
+    scaler_scale: [1.146,1.231,1.146,0.722,0.499,0.923,1.206,1.109,1.049,0.843,1.099,0.881,0.923,1.187,0.843,32.003,1.187,1.367,0.923,1.146],
+    mae: 3.03
+  }
+};
+
+// 重要度ランキング（改善提案で使用）
+const IMPORTANCE_RANKING = [
+  { feature: 'text_design', name: 'テロップ設計', importance: 1.828 },
+  { feature: 'is_night', name: '夜投稿', importance: 1.786 },
+  { feature: 'screen_comp', name: '画面全体構成', importance: 1.741 },
+  { feature: 'information_flow', name: '情報フロー', importance: 1.723 },
+  { feature: 'emotion_intensity', name: '感情価強度', importance: 1.691 },
+  { feature: 'reward_specificity', name: '報酬具体度', importance: 1.599 },
+  { feature: 'duration_log', name: '動画長', importance: 1.529 },
+  { feature: 'hierarchy', name: '主従関係', importance: 1.472 },
+  { feature: 'shot_variety', name: 'ショット多様性', importance: 1.349 },
+  { feature: 'zeigarnik', name: 'ツァイガルニク', importance: 1.163 },
+  { feature: 'cta', name: 'CTA', importance: 0.977 },
+  { feature: 'word_choice', name: 'ワードチョイス', importance: 0.969 },
+  { feature: 'shot_density', name: '連続発火密度', importance: 0.944 },
+  { feature: 'visual_evidence', name: '視覚根拠', importance: 0.841 },
+  { feature: 'peak_end', name: 'ピークエンド', importance: 0.807 },
+  { feature: 'curiosity', name: '好奇心ギャップ', importance: 0.632 },
+  { feature: 'target_clarity', name: 'ターゲット明確度', importance: 0.603 },
+  { feature: 'self_projection', name: '自己投影', importance: 0.538 },
+  { feature: 'margin', name: '余白', importance: 0.273 },
+];
+
+// ============================================
+// 状態管理
+// ============================================
+const state = {
+  scores: {},
+  videoData: null, // {duration, fileName, ...}
+  predictions: null,
+};
+
+// ============================================
+// Franklin方式：Claudeブラウザ連携
+// ============================================
+
+const CLAUDE_SCORING_PROMPT = `あなたはSラボ（バストケアサロン @beautybustn.nihonbashi）のTikTok投稿を認知心理学フレームで分析する専門家です。
+添付のタイル画像（動画のキーフレーム連結）を見て、以下の3つを出力してください。
+
+═══════════════════════════════
+【PART 1】17軸採点（JSON）
+═══════════════════════════════
+
+◎=3（完全に満たす） ○=1（ある程度） ✗=0（満たさない）
+
+■感情系
+1. emotion_intensity：強い感情誘導（共感・悩み・喜び）があるか
+2. target_clarity：「痩せ型さん」「30代」など誰向けかが具体的か
+3. reward_specificity：成果が「1カップUP」「3回目で」など数値/期間で明示されているか
+
+■認知フロー
+4. information_flow：1メッセージずつ整理されて流れるか（情報過多・同時表示は✗）
+
+■視覚系
+5. screen_comp：背景が情報を補強しているか
+6. shot_variety：バストアップ/ミディアム等の構図変化があるか
+7. text_design：フォント・色・縁取り・サイズの視認性と統一感
+8. margin：上下テロップの圧迫感がないか
+
+■時間系
+9. zeigarnik：未完了感で「続きを見たい」と思わせるか
+10. curiosity：具体的な疑問・興味を喚起するか
+
+■意味論系
+11. word_choice：能動動詞（「作る」「育てる」）×具体数値か。受動・状態描写（「できる」「なる」）は✗
+12. visual_evidence：実在人体ビフォーアフター=◎、マネキン+矢印=○、なし=✗
+13. hierarchy：成果/ベネフィットが画面の主役=◎、方法（回数・手順）が主役=✗
+14. self_projection：明確ターゲット×実在人体×典型悩みの組み合わせ
+
+■段階固有
+15. shot_density：シーン切り替わりが2秒前後=◎、3-5秒=○、5秒以上=✗
+16. peak_end：終盤に強い結論・余韻があるか
+17. cta：「保存して」「コメントで質問して」など具体的な行動指示
+
+═══════════════════════════════
+【PART 2】構造分析レポート
+═══════════════════════════════
+
+以下の項目を自然な日本語で記述してください：
+
+A) テロップ全文リスト：画像から読み取れるすべてのテロップを、表示タイミング順に書き出す
+B) 動画の構造タイプ：BA連発型 / Q&A型 / お客様の声型 / ストレッチ実演型 / その他
+C) 冒頭2秒のフック分析（🔴HOOKマーカー付きのフレームを重点的に分析）：
+   - 0.0〜0.3秒：最初に目に入る要素は何か？スワイプを止める力があるか？
+   - 0.3〜0.6秒：次に視線が移動する要素は？
+   - 0.6〜1.0秒：テロップが読み取れるタイミングは？
+   - 1.0〜2.0秒：2秒後に「もっと見たい」と思える構成か？
+   - 総合判定：フックとしての完成度（A/B/C/D評価）と改善方向
+D) ターゲット像：この動画が刺さる人物像を具体的に
+
+═══════════════════════════════
+【PART 3】具体的な改善提案
+═══════════════════════════════
+
+◎でない軸について、**具体的にどう修正すれば◎になるか**を提案してください。
+抽象的な指摘（「もっと良くする」等）は禁止です。以下の粒度で書いてください：
+
+■テロップ改善の場合：
+- 現状の文言：「〇〇」
+- 改善案：「△△」に変更
+- 理由：能動動詞に変えることで行動喚起が強まる
+
+■画面構成の改善の場合：
+- 現状：被写体のみで補助情報なし
+- 改善案：画面左にBA画像（Before:胸の高さが低い状態 → After:上がった状態）を配置。赤い矢印で変化方向を視覚化
+- 参考：投稿010型（4分割×BA画像）が22万再生を記録
+
+■CTA改善の場合：
+- 現状：CTAなし
+- 改善案：終盤に「このストレッチ保存して毎朝やってみて💪」のテロップを2秒間表示
+- 配置：画面下部、白背景×黒文字×角丸
+
+■被写体の改善の場合：
+- 現状の問題点を具体的に（例：同じ角度・距離で単調）
+- 改善案：中盤でバストアップに寄る、手元のジェスチャーを強調する等
+
+特に重要度が高い軸（text_design, information_flow, emotion_intensity, hierarchy, reward_specificity）の改善を優先してください。
+
+═══════════════════════════════
+【出力フォーマット】
+═══════════════════════════════
+
+必ず以下の順序で出力してください：
+
+■ まずPART 2とPART 3を自然な日本語で記述：
+
+【PART 2】構造分析レポート
+A) テロップ全文リスト：（表示タイミング順に全て書き出す）
+B) 構造タイプ：（BA連発型 / Q&A型 / お客様の声型 / ストレッチ実演型 / その他）
+C) 冒頭2秒のフック分析：（🔴HOOKフレームを重点分析）
+D) ターゲット像：
+
+【PART 3】具体的な改善提案
+1. [軸名]（現状：○ → 目標：◎）
+   現状：...
+   改善案：...
+   理由：...
+2. ...
+
+■ 最後にPART 1の採点JSONを出力：
+
+\`\`\`json
+{
+  "scores": {
+    "emotion_intensity": 3,
+    "target_clarity": 1,
+    "reward_specificity": 0,
+    "information_flow": 3,
+    "screen_comp": 1,
+    "shot_variety": 1,
+    "text_design": 3,
+    "margin": 1,
+    "zeigarnik": 3,
+    "curiosity": 3,
+    "word_choice": 1,
+    "visual_evidence": 0,
+    "hierarchy": 1,
+    "self_projection": 1,
+    "shot_density": 1,
+    "peak_end": 1,
+    "cta": 0
+  }
+}
+\`\`\`
+
+JSONは必ず回答の最後に配置してください。`;
+
+// 「Claudeで採点を開始」ボタン
+document.getElementById('openClaudeBtn').addEventListener('click', async () => {
+  if (!currentResult || currentResult.length === 0) {
+    alert('動画が処理されていません。\nStep1で動画をドロップしてタイル画像を生成してください。');
+    document.querySelector('[data-tab="step1"]').click();
+    return;
+  }
+
+  const result = currentResult[0];
+  const tiles = result.tiles;
+  let fileNames = [];
+
+  if (tiles.length === 1) {
+    // ① 1枚の場合：そのままダウンロード
+    const blob = await canvasToBlob(tiles[0].canvas);
+    downloadBlob(blob, tiles[0].fileName);
+    fileNames.push(tiles[0].fileName);
+  } else {
+    // ① 複数枚の場合：全タイル画像をZIPでダウンロード
+    const zip = new JSZip();
+    for (const tile of tiles) {
+      const blob = await canvasToBlob(tile.canvas);
+      const buf = await blob.arrayBuffer();
+      zip.file(tile.fileName, buf);
+      fileNames.push(tile.fileName);
+    }
+    const cleaned = result.baseName.replace(/^\d+(\.\d+)?s_/, '');
+    const zipName = `${cleaned}_${result.duration.toFixed(2)}s_tiles_${tiles.length}枚.zip`;
+    downloadBlob(await zip.generateAsync({ type: 'blob' }), zipName);
+  }
+
+  // ② 採点プロンプトをクリップボードにコピー
+  const tileInfo = tiles.length > 1
+    ? `\n\n※ タイル画像は${tiles.length}枚に分割されています。全て添付してください。各画像のヘッダーに[1/${tiles.length}]〜[${tiles.length}/${tiles.length}]と時間帯が記載されています。`
+    : '';
+  await navigator.clipboard.writeText(CLAUDE_SCORING_PROMPT + tileInfo);
+
+  // ③ claude.aiを新タブで開く
+  window.open('https://claude.ai/new', '_blank');
+
+  // ④ 案内モーダルを表示
+  showClaudeGuideModal(fileNames, tiles.length);
+});
+
+// 案内モーダル表示
+function showClaudeGuideModal(fileNames, tileCount) {
+  const modal = document.getElementById('autoScoreModal');
+  document.getElementById('modalSpinner').style.display = 'none';
+  document.getElementById('modalIcon').textContent = '📋';
+  document.getElementById('modalTitle').textContent = 'Claudeで採点する';
+  
+  const fileList = tileCount > 1
+    ? `タイル画像ZIP（${tileCount}枚）を解凍して全て添付`
+    : `タイル画像「${fileNames[0]}」を添付`;
+  
+  document.getElementById('modalText').innerHTML = `
+    <div style="text-align:left; font-size:13px; line-height:1.8;">
+      <strong>以下の手順でClaude.aiに採点させてください：</strong><br><br>
+      <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅ 完了</span>　${tileCount > 1 ? `タイル画像ZIP（${tileCount}枚）をダウンロード` : `タイル画像をダウンロード`}<br>
+      <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅ 完了</span>　採点プロンプトをクリップボードにコピー<br>
+      <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅ 完了</span>　Claude.aiを新タブで開いた<br><br>
+      <strong>Claude.aiで：</strong><br>
+      <span style="color:#e74c3c;">①</span> ${fileList}（クリップorドラッグ）<br>
+      <span style="color:#e74c3c;">②</span> プロンプトをペースト（Cmd/Ctrl+V）<br>
+      <span style="color:#e74c3c;">③</span> 送信 → 返答全体をコピー<br><br>
+      <strong>このツールに戻って：</strong><br>
+      <span style="color:#667eea;">④</span>「📥 採点結果JSONを貼り付け → 予測」を押す
+    </div>
+  `;
+  document.getElementById('modalProgress').style.display = 'none';
+  document.getElementById('modalActions').style.display = 'block';
+  document.getElementById('modalCloseBtn').textContent = 'OK、やってみる';
+  modal.classList.add('active');
+}
+
+// 「採点結果JSONを貼り付け → 予測」ボタン
+document.getElementById('pasteJsonBtn').addEventListener('click', async () => {
+  let jsonText = '';
+  
+  try {
+    jsonText = await navigator.clipboard.readText();
+  } catch(e) {
+    // クリップボード読み取り失敗時は手入力モーダルを表示
+    jsonText = prompt('Claude.aiからコピーしたJSONをここに貼り付けてください：') || '';
+  }
+  
+  if (!jsonText.trim()) {
+    alert('JSONが空です。Claude.aiの返答からJSONをコピーして、もう一度試してください。');
+    return;
+  }
+  
+  try {
+    // JSONブロックを抽出
+    const jsonMatch = jsonText.match(/```json\s*([\s\S]*?)\s*```/) ||
+                      jsonText.match(/```\s*([\s\S]*?)\s*```/) ||
+                      jsonText.match(/(\{[\s\S]*\})/);
+    const parsed = JSON.parse(jsonMatch ? jsonMatch[1] : jsonText);
+    
+    if (!parsed.scores) {
+      throw new Error('"scores"キーが見つかりません');
+    }
+    
+    // 採点フォームに反映
+    const scores = parsed.scores;
+    let appliedCount = 0;
+    
+    Object.keys(scores).forEach(axis => {
+      const score = scores[axis];
+      state.scores[axis] = score;
+      
+      const btnsContainer = document.querySelector(`[data-axis="${axis}"]`);
+      if (btnsContainer) {
+        btnsContainer.querySelectorAll('.score-btn').forEach(b => {
+          b.classList.remove('selected', 'circle', 'triangle', 'cross');
+        });
+        const targetBtn = btnsContainer.querySelector(`[data-score="${score}"]`);
+        if (targetBtn) {
+          targetBtn.classList.add('selected');
+          if (score === 3) targetBtn.classList.add('circle');
+          else if (score === 1) targetBtn.classList.add('triangle');
+          else targetBtn.classList.add('cross');
+          appliedCount++;
+        }
+      }
+    });
+    
+    // PART 2/3 のレポート部分を抽出（JSONは最後に出力される）
+    let reportText = '';
+    const fullText = jsonText;
+    const jsonBlockStart = fullText.indexOf('```json');
+    if (jsonBlockStart > 0) {
+      // JSONブロックより前のテキストがレポート
+      reportText = fullText.substring(0, jsonBlockStart).trim();
+    } else {
+      // ```json がない場合は最後の { より前を取る
+      const lastBrace = fullText.lastIndexOf('{"scores"');
+      if (lastBrace > 0) {
+        reportText = fullText.substring(0, lastBrace).trim();
+      }
+    }
+    
+    // レポートをstateに保存
+    state.claudeReport = reportText;
+    
+    alert(`✅ ${appliedCount}軸の採点を反映しました。\n予測結果とClaudeの分析レポートを表示します。`);
+    
+    // 自動で予測計算へ
+    displayPredictions();
+    
+  } catch(e) {
+    alert(`JSONの解析に失敗しました。\n\nエラー: ${e.message}\n\nClaude.aiの返答全体をコピーして再試行してください。\n\n💡ヒント：Claude.aiの返答全体（JSONブロック含む）をコピーしてください。`);
+  }
+});
+
+// モーダル閉じる
+document.getElementById('modalCloseBtn').addEventListener('click', () => {
+  document.getElementById('autoScoreModal').classList.remove('active');
+  document.getElementById('modalProgress').style.display = 'block';
+});
+
+// バージョン履歴モーダル
+document.getElementById('changelogBtn').addEventListener('click', () => {
+  document.getElementById('changelogModal').classList.add('active');
+});
+document.getElementById('changelogCloseBtn').addEventListener('click', () => {
+  document.getElementById('changelogModal').classList.remove('active');
+});
+
+// ============================================
+// 採点UIの構築
+// ============================================
+function buildScoringUI() {
+  const groups = [
+    { id: 'emotion_axes', axes: AXES.emotion },
+    { id: 'cognitive_axes', axes: AXES.cognitive },
+    { id: 'visual_axes', axes: AXES.visual },
+    { id: 'temporal_axes', axes: AXES.temporal },
+    { id: 'semantic_axes', axes: AXES.semantic },
+    { id: 'stage_axes', axes: AXES.stage },
+  ];
+  
+  groups.forEach(g => {
+    const container = document.getElementById(g.id);
+    g.axes.forEach(axis => {
+      const row = document.createElement('div');
+      row.className = 'score-row';
+      row.innerHTML = `
+        <div class="score-label">
+          <div class="axis-name">${axis.name}</div>
+          <div class="axis-desc">${axis.desc}</div>
+        </div>
+        <div class="score-buttons" data-axis="${axis.id}">
+          <button class="score-btn" data-score="3">◎</button>
+          <button class="score-btn" data-score="1">○</button>
+          <button class="score-btn" data-score="0">✗</button>
+        </div>
+      `;
+      container.appendChild(row);
+    });
+  });
+  
+  // 採点ボタンのイベント
+  document.querySelectorAll('.score-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const axis = btn.closest('.score-buttons').dataset.axis;
+      const score = parseInt(btn.dataset.score);
+      state.scores[axis] = score;
+      
+      // ボタンのスタイル更新
+      btn.parentElement.querySelectorAll('.score-btn').forEach(b => {
+        b.classList.remove('selected', 'circle', 'triangle', 'cross');
+      });
+      btn.classList.add('selected');
+      if (score === 3) btn.classList.add('circle');
+      else if (score === 1) btn.classList.add('triangle');
+      else btn.classList.add('cross');
+    });
+  });
+}
+
+// ============================================
+// 予測計算
+// ============================================
+function calculatePrediction(modelName) {
+  const model = MODEL[modelName];
+  const features = {
+    duration: parseFloat(document.getElementById('meta_duration').value) || 0,
+    is_night: parseInt(document.getElementById('meta_hour').value) >= 20 ? 1 : 0,
+  };
+  features.duration_log = Math.log1p(features.duration);
+  
+  // 採点スコアを取得
+  Object.keys(state.scores).forEach(k => {
+    features[k] = state.scores[k];
+  });
+  
+  // 特徴量配列を作成（モデルの特徴量順）
+  const x = model.features.map(f => features[f] !== undefined ? features[f] : 0);
+  
+  // 標準化
+  const x_scaled = x.map((v, i) => (v - model.scaler_mean[i]) / model.scaler_scale[i]);
+  
+  // 線形和
+  let pred = model.intercept;
+  for (let i = 0; i < x_scaled.length; i++) {
+    pred += x_scaled[i] * model.coefficients[i];
+  }
+  
+  return { value: pred, mae: model.mae };
+}
+
+// 改善提案の計算
+function calculateImprovements() {
+  const currentScores = { ...state.scores };
+  const improvements = [];
+  
+  // 各軸について、もし◎にしたら再生数がどう変わるかを計算
+  const currentViewLog = calculatePrediction('再生数(log)').value;
+  const currentViewCount = Math.expm1(currentViewLog);
+  
+  IMPORTANCE_RANKING.forEach(item => {
+    const axis = item.feature;
+    if (axis === 'is_night' || axis === 'duration_log') return; // メタは除外
+    
+    const currentScore = state.scores[axis];
+    if (currentScore === undefined || currentScore === 3) return; // 未採点 or 既に◎は除外
+    
+    // 仮想的に◎にして再計算
+    state.scores[axis] = 3;
+    const newViewLog = calculatePrediction('再生数(log)').value;
+    const newViewCount = Math.expm1(newViewLog);
+    const diff = newViewCount - currentViewCount;
+    
+    state.scores[axis] = currentScore; // 戻す
+    
+    if (diff > 0) {
+      improvements.push({
+        axis: axis,
+        name: item.name,
+        from: currentScore === 1 ? '○' : '✗',
+        to: '◎',
+        viewGain: Math.round(diff),
+        importance: item.importance,
+      });
+    }
+  });
+  
+  // 影響度順にソート
+  improvements.sort((a, b) => b.viewGain - a.viewGain);
+  return improvements;
+}
+
+// 強み抽出
+function extractStrengths() {
+  const strengths = [];
+  IMPORTANCE_RANKING.forEach(item => {
+    if (state.scores[item.feature] === 3 && item.importance > 0.8) {
+      strengths.push({
+        name: item.name,
+        importance: item.importance,
+      });
+    }
+  });
+  return strengths.slice(0, 5);
+}
+
+// 予測結果の表示
+function displayPredictions() {
+  // バリデーション
+  const axisCount = Object.keys(state.scores).length;
+  if (axisCount < 17) {
+    document.getElementById('predictionResults').innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">⚠️</div>
+        <div>採点が不完全です（${axisCount}/17軸入力済み）</div>
+        <div style="margin-top:8px; font-size:13px;">全ての軸を採点してください</div>
+      </div>
+    `;
+    document.querySelector('[data-tab="step3"]').click();
+    return;
+  }
+  
+  const view2sec = calculatePrediction('2秒視聴率(%)');
+  const fullView = calculatePrediction('フル視聴率(%)');
+  const recommend = calculatePrediction('おすすめ流入率(%)');
+  const viewLog = calculatePrediction('再生数(log)');
+  const followerLog = calculatePrediction('フォロワー獲得(log)');
+  const saveLog = calculatePrediction('保存数(log)');
+  
+  const viewCount = Math.round(Math.expm1(viewLog.value));
+  const followerGain = Math.round(Math.expm1(followerLog.value));
+  const saveCount = Math.round(Math.expm1(saveLog.value));
+  
+  // 総合スコア計算（採点軸の合計 / 最大値）
+  const totalScore = Object.values(state.scores).reduce((a, b) => a + b, 0);
+  const maxScore = 17 * 3; // 17軸 × 最大3点
+  const scorePercent = Math.round((totalScore / maxScore) * 100);
+  
+  // 改善提案
+  const improvements = calculateImprovements();
+  const strengths = extractStrengths();
+  
+  const fmt = (n) => n.toLocaleString();
+  const formatViews = (n) => {
+    if (n >= 10000) return `${Math.round(n/1000)}K`;
+    return fmt(n);
+  };
+  
+  let html = `
+    <div class="total-score-card">
+      <h2>採点総合スコア</h2>
+      <div class="score">${totalScore} / ${maxScore}</div>
+      <div class="max">（${scorePercent}%）</div>
+    </div>
+    
+    <h3 style="margin-bottom:12px; color:#2c3e50;">📊 予測パフォーマンス</h3>
+    <div class="predictions-grid">
+      <div class="prediction-card">
+        <h3>2秒視聴率</h3>
+        <div class="prediction-value">${view2sec.value.toFixed(1)}%</div>
+        <div class="prediction-range">±${view2sec.mae.toFixed(1)}%</div>
+      </div>
+      <div class="prediction-card">
+        <h3>フル視聴率</h3>
+        <div class="prediction-value">${fullView.value.toFixed(1)}%</div>
+        <div class="prediction-range">±${fullView.mae.toFixed(1)}%</div>
+      </div>
+      <div class="prediction-card">
+        <h3>おすすめ流入率</h3>
+        <div class="prediction-value">${recommend.value.toFixed(1)}%</div>
+        <div class="prediction-range">±${recommend.mae.toFixed(1)}%</div>
+      </div>
+      <div class="prediction-card">
+        <h3>再生数</h3>
+        <div class="prediction-value">${formatViews(viewCount)}</div>
+        <div class="prediction-range">レンジ: ${formatViews(Math.round(viewCount/3))} 〜 ${formatViews(viewCount*3)}</div>
+      </div>
+      <div class="prediction-card">
+        <h3>新規フォロワー</h3>
+        <div class="prediction-value">${fmt(followerGain)}</div>
+        <div class="prediction-range">レンジ: ${fmt(Math.round(followerGain/3))} 〜 ${fmt(followerGain*3)}</div>
+      </div>
+      <div class="prediction-card">
+        <h3>保存数</h3>
+        <div class="prediction-value">${fmt(saveCount)}</div>
+        <div class="prediction-range">レンジ: ${fmt(Math.round(saveCount/3))} 〜 ${fmt(saveCount*3)}</div>
+      </div>
+    </div>
+  `;
+  
+  // 強み
+  if (strengths.length > 0) {
+    html += `
+      <div class="strength-section">
+        <div class="strength-title">✅ 強み（高重要度軸で◎）</div>
+        ${strengths.map(s => `<div class="strength-item">▸ <strong>${s.name}</strong> が◎（重要度: ${s.importance.toFixed(2)}）</div>`).join('')}
+      </div>
+    `;
+  }
+  
+  // 改善提案
+  if (improvements.length > 0) {
+    html += `
+      <div class="improvement-section">
+        <div class="improvement-title">💡 改善提案（感情原理に基づく）</div>
+        ${improvements.slice(0, 5).map((imp, i) => `
+          <div class="improvement-item">
+            <strong>${i+1}. ${imp.name}</strong>（${imp.from} → ${imp.to}）
+            <br>→ 再生数 +${formatViews(imp.viewGain)} 想定（重要度: ${imp.importance.toFixed(2)}）
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } else {
+    html += `
+      <div class="strength-section">
+        <div class="strength-title">🎉 すべての軸が最高評価</div>
+        <div class="strength-item">改善余地が見当たりません。素晴らしいコンテンツです！</div>
+      </div>
+    `;
+  }
+  
+  // Claudeの分析レポートがあれば表示
+  if (state.claudeReport) {
+    // マークダウンの見出しをHTMLに変換
+    let reportHtml = state.claudeReport
+      .replace(/^### (.+)$/gm, '<h4 style="color:#2c3e50; margin-top:16px;">$1</h4>')
+      .replace(/^## (.+)$/gm, '<h3 style="color:#2c3e50; margin-top:20px; border-bottom:1px solid #eee; padding-bottom:6px;">$1</h3>')
+      .replace(/^# (.+)$/gm, '<h2 style="color:#2c3e50;">$1</h2>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/^- (.+)$/gm, '<div style="padding:2px 0 2px 16px;">・$1</div>')
+      .replace(/^(\d+)\. (.+)$/gm, '<div style="padding:4px 0 4px 8px;"><strong>$1.</strong> $2</div>')
+      .replace(/【(.+?)】/g, '<div style="font-size:15px; font-weight:700; color:#c0392b; margin:16px 0 8px; border-left:4px solid #c0392b; padding-left:10px;">$1</div>')
+      .replace(/→/g, '<span style="color:#667eea;">→</span>')
+      .replace(/\n\n/g, '<br>')
+      .replace(/\n/g, '<br>');
+    
+    html += `
+      <div style="background:white; border:2px solid #667eea; border-radius:12px; padding:20px; margin-top:16px;">
+        <h3 style="color:#667eea; margin-bottom:12px; font-size:16px;">🤖 Claude AI 分析レポート</h3>
+        <div style="font-size:13px; line-height:1.9; color:#333;">
+          ${reportHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  document.getElementById('predictionResults').innerHTML = html;
+  document.querySelector('[data-tab="step3"]').click();
+}
+
+// ============================================
+// タブ切り替え
+// ============================================
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(tab.dataset.tab).classList.add('active');
+  });
+});
+
+// ============================================
+// 動画処理関連（既存機能）
+// ============================================
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const video = document.getElementById('video');
+const canvas = document.getElementById('previewCanvas');
+const progress = document.getElementById('progress');
+const progressText = document.getElementById('progressText');
+const progressFill = document.getElementById('progressFill');
+const preview = document.getElementById('preview');
+
+let currentResult = null;
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropZone.classList.add('dragover');
+});
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('video/'));
+  if (files.length > 0) processVideos(files);
+});
+fileInput.addEventListener('change', (e) => {
+  const files = Array.from(e.target.files);
+  if (files.length > 0) processVideos(files);
+});
+
+function getOptimalFrameCount(duration) {
+  // シンプルに動画長から間隔を決定
+  // 90秒以下 → 0.4秒間隔、90秒超 → 0.5秒間隔
+  const interval = duration <= 90 ? 0.4 : 0.5;
+  return { interval, count: Math.floor(duration / interval) + 1 };
+}
+
+function getBaseName(fileName) { return fileName.replace(/\.[^/.]+$/, ''); }
+function getExtension(fileName) { const m = fileName.match(/\.([^/.]+)$/); return m ? m[1] : 'mp4'; }
+
+function generateRenamedName(baseName, duration, ext) {
+  const cleaned = baseName.replace(/^\d+(\.\d+)?s_/, '');
+  return `${duration.toFixed(2)}s_${cleaned}.${ext}`;
+}
+
+function generateFrameName(baseName, duration, idx, total, ts) {
+  const cleaned = baseName.replace(/^\d+(\.\d+)?s_/, '');
+  const idxStr = String(idx + 1).padStart(3, '0');
+  const totalStr = String(total).padStart(3, '0');
+  return `${cleaned}_${duration.toFixed(2)}s_frame_${idxStr}of${totalStr}_at${ts.toFixed(2)}s.png`;
+}
+
+function seekVideo(time) {
+  return new Promise((resolve) => {
+    let resolved = false;
+    const timeout = setTimeout(() => {
+      if (!resolved) { resolved = true; resolve(); }
+    }, 500);
+    video.onseeked = () => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        setTimeout(resolve, 20);
+      }
+    };
+    video.currentTime = time;
+  });
+}
+
+function yieldToUI() {
+  return new Promise(resolve => setTimeout(resolve, 0));
+}
+
+async function processVideos(files) {
+  progress.classList.add('active');
+  preview.classList.remove('active');
+  const allResults = [];
+  
+  for (let fileIdx = 0; fileIdx < files.length; fileIdx++) {
+    const file = files[fileIdx];
+    const baseName = getBaseName(file.name);
+    const ext = getExtension(file.name);
+    const url = URL.createObjectURL(file);
+    progressText.textContent = `[${fileIdx + 1}/${files.length}] ${file.name} を読み込み中...`;
+    
+    video.src = url;
+    await new Promise((resolve, reject) => {
+      video.onloadedmetadata = resolve;
+      video.onerror = () => reject(new Error('動画の読み込みに失敗'));
+      setTimeout(() => resolve(), 10000); // 10秒タイムアウトで強制進行
+    });
+    
+    const duration = video.duration;
+    const renamedFileName = generateRenamedName(baseName, duration, ext);
+    const { interval, count: totalCount } = getOptimalFrameCount(duration);
+    
+    progressText.textContent = `[${fileIdx + 1}/${files.length}] ${interval}秒間隔で${totalCount}フレームをキャプチャ中...`;
+    
+    const frames = [];
+    for (let t = 0; t < duration; t += interval) {
+      const ts = Math.round(t * 100) / 100;
+      await seekVideo(ts);
+      const captureCanvas = document.createElement('canvas');
+      captureCanvas.width = video.videoWidth;
+      captureCanvas.height = video.videoHeight;
+      captureCanvas.getContext('2d').drawImage(video, 0, 0);
+      frames.push({
+        timestamp: ts,
+        canvas: captureCanvas,
+        fileName: generateFrameName(baseName, duration, frames.length, totalCount, ts)
+      });
+      
+      // 10フレームごとにUI更新
+      if (frames.length % 10 === 0) {
+        const p = (fileIdx + (t / duration)) / files.length;
+        progressFill.style.width = `${p * 90}%`;
+        progressText.textContent = `[${fileIdx + 1}/${files.length}] キャプチャ ${frames.length}/${totalCount}（${ts.toFixed(1)}s / ${duration.toFixed(1)}s）`;
+        await yieldToUI();
+      }
+    }
+    
+    const tiles = createTiledImage(frames, baseName, duration);
+    allResults.push({
+      originalFile: file, baseName, duration,
+      renamedFileName, renamedBlob: file, frames, tiles,
+      stats: {
+        totalFrames: frames.length,
+        interval: interval,
+        hookFrames: frames.filter(f => f.timestamp <= 2.0).length,
+        tileCount: tiles.length,
+      }
+    });
+    URL.revokeObjectURL(url);
+  }
+  
+  progressFill.style.width = '100%';
+  if (allResults.length > 0) {
+    const stats = allResults[0].stats;
+    progressText.textContent = `完了！ ${stats.totalFrames}フレーム（${stats.interval}秒間隔）→ タイル画像${stats.tileCount}枚（各最大20カット）`;
+  } else {
+    progressText.textContent = '完了！';
+  }
+  currentResult = allResults;
+  
+  // 最初の動画のdurationを採点フォームに反映
+  if (allResults.length > 0) {
+    document.getElementById('meta_duration').value = allResults[0].duration.toFixed(2);
+    state.videoData = { duration: allResults[0].duration };
+  }
+  
+  setTimeout(() => {
+    progress.classList.remove('active');
+    preview.classList.add('active');
+    if (allResults.length >= 1) {
+      // 最初のタイル画像をプレビュー表示
+      const firstTile = allResults[0].tiles[0];
+      canvas.width = firstTile.width;
+      canvas.height = firstTile.height;
+      canvas.getContext('2d').drawImage(firstTile.canvas, 0, 0);
+      
+      // フレームギャラリーを構築
+      buildFrameGallery(allResults[0]);
+    }
+  }, 500);
+}
+
+// ============================================
+// フレームギャラリー
+// ============================================
+let gallerySize = 'L'; // S/M/L
+let lightboxIndex = 0;
+let galleryFrames = [];
+
+function buildFrameGallery(result) {
+  galleryFrames = result.frames;
+  const grid = document.getElementById('frameGrid');
+  const label = document.getElementById('frameCountLabel');
+  label.textContent = `（${galleryFrames.length}フレーム / ${result.duration.toFixed(1)}秒 / ${result.stats.interval}秒間隔）`;
+  
+  grid.innerHTML = '';
+  
+  galleryFrames.forEach((frame, i) => {
+    const isHook = frame.timestamp <= 2.0;
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = `position:relative; cursor:pointer; border-radius:6px; overflow:hidden; border:2px solid ${isHook ? '#e74c3c' : '#ddd'}; transition:transform 0.15s;`;
+    wrapper.onmouseenter = () => wrapper.style.transform = 'scale(1.03)';
+    wrapper.onmouseleave = () => wrapper.style.transform = 'scale(1)';
+    wrapper.onclick = () => openLightbox(i);
+    
+    const img = document.createElement('img');
+    img.src = frame.canvas.toDataURL('image/jpeg', 0.7);
+    img.style.cssText = 'width:100%; display:block;';
+    img.loading = 'lazy';
+    
+    const labelDiv = document.createElement('div');
+    labelDiv.style.cssText = `position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,0.7); color:white; font-size:10px; padding:3px 6px; text-align:center;`;
+    labelDiv.textContent = `${isHook ? '🔴' : ''}#${i+1} ${frame.timestamp.toFixed(2)}s`;
+    
+    wrapper.appendChild(img);
+    wrapper.appendChild(labelDiv);
+    grid.appendChild(wrapper);
+  });
+  
+  setGallerySize(gallerySize);
+}
+
+function setGallerySize(size) {
+  gallerySize = size;
+  const grid = document.getElementById('frameGrid');
+  const sizes = { S: '100px', M: '160px', L: '240px' };
+  grid.style.gridTemplateColumns = `repeat(auto-fill, minmax(${sizes[size]}, 1fr))`;
+  
+  // ボタンのアクティブ状態
+  ['gallerySmallBtn', 'galleryMedBtn', 'galleryLargeBtn'].forEach(id => {
+    document.getElementById(id).className = 'btn btn-secondary';
+  });
+  const activeId = { S: 'gallerySmallBtn', M: 'galleryMedBtn', L: 'galleryLargeBtn' }[size];
+  document.getElementById(activeId).className = 'btn btn-primary';
+}
+
+function openLightbox(index) {
+  lightboxIndex = index;
+  updateLightbox();
+  document.getElementById('frameLightbox').classList.add('active');
+}
+
+function updateLightbox() {
+  const frame = galleryFrames[lightboxIndex];
+  const img = document.getElementById('lightboxImg');
+  img.src = frame.canvas.toDataURL('image/png');
+  const isHook = frame.timestamp <= 2.0;
+  document.getElementById('lightboxLabel').textContent = 
+    `${isHook ? '🔴HOOK ' : ''}#${lightboxIndex+1}/${galleryFrames.length}  ⏱ ${frame.timestamp.toFixed(2)}s`;
+}
+
+document.getElementById('lightboxCloseBtn').addEventListener('click', () => {
+  document.getElementById('frameLightbox').classList.remove('active');
+});
+document.getElementById('frameLightbox').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('frameLightbox')) {
+    document.getElementById('frameLightbox').classList.remove('active');
+  }
+});
+document.getElementById('lightboxPrevBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  lightboxIndex = (lightboxIndex - 1 + galleryFrames.length) % galleryFrames.length;
+  updateLightbox();
+});
+document.getElementById('lightboxNextBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  lightboxIndex = (lightboxIndex + 1) % galleryFrames.length;
+  updateLightbox();
+});
+// キーボード操作
+document.addEventListener('keydown', (e) => {
+  if (!document.getElementById('frameLightbox').classList.contains('active')) return;
+  if (e.key === 'ArrowLeft') { lightboxIndex = (lightboxIndex - 1 + galleryFrames.length) % galleryFrames.length; updateLightbox(); }
+  if (e.key === 'ArrowRight') { lightboxIndex = (lightboxIndex + 1) % galleryFrames.length; updateLightbox(); }
+  if (e.key === 'Escape') document.getElementById('frameLightbox').classList.remove('active');
+});
+
+document.getElementById('gallerySmallBtn').addEventListener('click', () => setGallerySize('S'));
+document.getElementById('galleryMedBtn').addEventListener('click', () => setGallerySize('M'));
+document.getElementById('galleryLargeBtn').addEventListener('click', () => setGallerySize('L'));
+
+function createTiledImage(frames, baseName, duration) {
+  const MAX_PER_TILE = 20;
+  const FRAMES_PER_ROW = 4;
+  const PADDING = 8;
+  const LABEL_HEIGHT = 28;
+  const HEADER_HEIGHT = 40;
+  const maxW = 320;
+  
+  const totalTiles = Math.ceil(frames.length / MAX_PER_TILE);
+  const tiles = [];
+  
+  for (let tileIdx = 0; tileIdx < totalTiles; tileIdx++) {
+    const startIdx = tileIdx * MAX_PER_TILE;
+    const endIdx = Math.min(startIdx + MAX_PER_TILE, frames.length);
+    const tileFrames = frames.slice(startIdx, endIdx);
+    
+    const frameWidth = tileFrames[0].canvas.width;
+    const frameHeight = tileFrames[0].canvas.height;
+    const scale = frameWidth > maxW ? maxW / frameWidth : 1;
+    const sw = Math.floor(frameWidth * scale);
+    const sh = Math.floor(frameHeight * scale);
+    
+    const cols = Math.min(FRAMES_PER_ROW, tileFrames.length);
+    const rows = Math.ceil(tileFrames.length / cols);
+    const totalW = cols * sw + (cols + 1) * PADDING;
+    const totalH = HEADER_HEIGHT + rows * (sh + LABEL_HEIGHT) + (rows + 1) * PADDING;
+    
+    const tc = document.createElement('canvas');
+    tc.width = totalW;
+    tc.height = totalH;
+    const ctx = tc.getContext('2d');
+    
+    // 背景
+    ctx.fillStyle = '#2c3e50';
+    ctx.fillRect(0, 0, totalW, totalH);
+    
+    // ヘッダー
+    const startTime = tileFrames[0].timestamp.toFixed(1);
+    const endTime = tileFrames[tileFrames.length - 1].timestamp.toFixed(1);
+    const tileLabel = totalTiles > 1
+      ? `${baseName} (${duration.toFixed(2)}s) [${tileIdx + 1}/${totalTiles}] ${startTime}s〜${endTime}s`
+      : `${baseName} (${duration.toFixed(2)}s, ${frames.length} frames)`;
+    
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(tileLabel, totalW / 2, HEADER_HEIGHT / 2);
+    
+    // 各フレーム描画
+    tileFrames.forEach((frame, i) => {
+      const globalIdx = startIdx + i;
+      const col = i % cols, row = Math.floor(i / cols);
+      const x = PADDING + col * (sw + PADDING);
+      const y = HEADER_HEIGHT + PADDING + row * (sh + LABEL_HEIGHT + PADDING);
+      ctx.drawImage(frame.canvas, x, y, sw, sh);
+      
+      // ラベル背景
+      ctx.fillStyle = '#2c3e50';
+      ctx.fillRect(x, y + sh, sw, LABEL_HEIGHT);
+      
+      // ラベルテキスト
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 12px sans-serif';
+      const isHook = frame.timestamp <= 2.0;
+      const hookLabel = isHook ? '🔴' : '';
+      ctx.fillText(`${hookLabel}#${globalIdx + 1}/${frames.length} ⏱${frame.timestamp.toFixed(2)}s`, x + sw / 2, y + sh + LABEL_HEIGHT / 2);
+    });
+    
+    // ファイル名を生成
+    const tileNumStr = String(tileIdx + 1).padStart(2, '0');
+    const totalStr = String(totalTiles).padStart(2, '0');
+    const cleaned = baseName.replace(/^\d+(\.\d+)?s_/, '');
+    const fileName = totalTiles > 1
+      ? `${cleaned}_${duration.toFixed(2)}s_tile_${tileNumStr}of${totalStr}_(${startTime}-${endTime}s).png`
+      : `${cleaned}_${duration.toFixed(2)}s_keyframes_tile.png`;
+    
+    tiles.push({
+      canvas: tc,
+      width: totalW,
+      height: totalH,
+      fileName: fileName,
+      tileIndex: tileIdx,
+      totalTiles: totalTiles,
+      startTime: parseFloat(startTime),
+      endTime: parseFloat(endTime),
+      frameCount: tileFrames.length,
+    });
+  }
+  
+  return tiles; // 配列で返す
+}
+
+function canvasToBlob(c) {
+  return new Promise((r) => c.toBlob((b) => r(b), 'image/png'));
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 100);
+}
+
+document.getElementById('downloadRenamedBtn').addEventListener('click', async () => {
+  if (!currentResult) return;
+  if (currentResult.length === 1) {
+    downloadBlob(currentResult[0].renamedBlob, currentResult[0].renamedFileName);
+  } else {
+    const zip = new JSZip();
+    for (const r of currentResult) {
+      const buf = await r.renamedBlob.arrayBuffer();
+      zip.file(r.renamedFileName, buf);
+    }
+    downloadBlob(await zip.generateAsync({ type: 'blob' }), 'renamed_videos.zip');
+  }
+});
+
+document.getElementById('downloadTileBtn').addEventListener('click', async () => {
+  if (!currentResult) return;
+  const r = currentResult[0];
+  if (r.tiles.length === 1) {
+    // 1枚だけならそのままダウンロード
+    const blob = await canvasToBlob(r.tiles[0].canvas);
+    downloadBlob(blob, r.tiles[0].fileName);
+  } else {
+    // 複数枚ならZIPにまとめる
+    const zip = new JSZip();
+    for (const tile of r.tiles) {
+      const blob = await canvasToBlob(tile.canvas);
+      const buf = await blob.arrayBuffer();
+      zip.file(tile.fileName, buf);
+    }
+    const cleaned = r.baseName.replace(/^\d+(\.\d+)?s_/, '');
+    downloadBlob(await zip.generateAsync({ type: 'blob' }), `${cleaned}_${r.duration.toFixed(2)}s_tiles_${r.tiles.length}枚.zip`);
+  }
+});
+
+document.getElementById('downloadZipBtn').addEventListener('click', async () => {
+  if (!currentResult) return;
+  const zip = new JSZip();
+  for (const r of currentResult) {
+    const folder = currentResult.length > 1 ? zip.folder(r.baseName.replace(/^\d+(\.\d+)?s_/, '')) : zip;
+    for (const frame of r.frames) {
+      const blob = await canvasToBlob(frame.canvas);
+      const buf = await blob.arrayBuffer();
+      folder.file(frame.fileName, buf);
+    }
+  }
+  downloadBlob(await zip.generateAsync({ type: 'blob' }), 'all_frames.zip');
+});
+
+document.getElementById('goToScoringBtn').addEventListener('click', () => {
+  document.querySelector('[data-tab="step2"]').click();
+});
+
+// ============================================
+// 採点関連ボタン
+// ============================================
+document.getElementById('allCircleBtn').addEventListener('click', () => {
+  const allAxes = [
+    ...AXES.emotion, ...AXES.cognitive, ...AXES.visual,
+    ...AXES.temporal, ...AXES.semantic, ...AXES.stage
+  ];
+  allAxes.forEach(a => {
+    state.scores[a.id] = 3;
+    const btnsContainer = document.querySelector(`[data-axis="${a.id}"]`);
+    if (btnsContainer) {
+      btnsContainer.querySelectorAll('.score-btn').forEach(b => {
+        b.classList.remove('selected', 'circle', 'triangle', 'cross');
+      });
+      const circleBtn = btnsContainer.querySelector('[data-score="3"]');
+      circleBtn.classList.add('selected', 'circle');
+    }
+  });
+});
+
+document.getElementById('resetScoreBtn').addEventListener('click', () => {
+  state.scores = {};
+  document.querySelectorAll('.score-btn').forEach(b => {
+    b.classList.remove('selected', 'circle', 'triangle', 'cross');
+  });
+  document.getElementById('meta_duration').value = '';
+  document.getElementById('meta_hour').value = '';
+});
+
+document.getElementById('exportJsonBtn').addEventListener('click', () => {
+  const output = {
+    duration: parseFloat(document.getElementById('meta_duration').value) || null,
+    post_hour: parseInt(document.getElementById('meta_hour').value) || null,
+    is_night: parseInt(document.getElementById('meta_hour').value) >= 20 ? 1 : 0,
+    scores: state.scores,
+  };
+  const json = JSON.stringify(output, null, 2);
+  document.getElementById('jsonOutput').textContent = json;
+  document.getElementById('jsonOutput').style.display = 'block';
+  navigator.clipboard.writeText(json).then(() => {
+    alert('JSONをクリップボードにコピーしました');
+  });
+});
+
+document.getElementById('calculatePredictBtn').addEventListener('click', displayPredictions);
+
+// 初期化
+buildScoringUI();
+</script>
+
+</body>
+</html>
