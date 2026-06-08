@@ -1,14 +1,15 @@
 <!DOCTYPE html>
 <!--
   ╔══════════════════════════════════════════════════════════╗
-  ║  Sラボ投稿前チェックツール                                ║
-  ║  Version: 2.2.0                                          ║
-  ║  Last Updated: 2026-05-26                                ║
+  ║  Sラボ投稿フィードフォワードツール                        ║
+  ║  Version: 3.0.0                                          ║
+  ║  Last Updated: 2026-06-08                                ║
   ║  Author: 真之介 × Claude                                 ║
   ║                                                          ║
-  ║  機能: 動画分析 → 17軸採点 → ML予測 → 改善提案           ║
-  ║  モデル: Ridge回帰 + LOOCV（13サンプル学習済み）          ║
-  ║  連携: Claude.ai Franklin方式（APIキー不要）              ║
+  ║  思想: 投稿前予測 → 投稿後フィードフォワード（アジャイル） ║
+  ║  核: TikTok 3関門モデル（フック→本編維持→普遍性）         ║
+  ║  関門1(〜500)=2秒視聴率 / 関門2(〜5000)=本編 / 関門3=拡散 ║
+  ║  連携: Claude.ai Franklin方式 + Google Drive（APIキー不要）║
   ╚══════════════════════════════════════════════════════════╝
 -->
 <html lang="ja">
@@ -520,6 +521,128 @@ header p {
 .modal-progress-list .step.active { color: #667eea; font-weight: 600; }
 .modal-progress-list .step.pending { color: #999; }
 
+/* === 比較モード === */
+.compare-panel {
+  flex: 1;
+  min-width: 0;
+  border: 2px solid #e0e0e0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #f8f9fa;
+}
+
+.compare-panel-header {
+  background: #2c3e50;
+  color: white;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.compare-panel-header.right { background: #667eea; }
+
+.compare-drop-zone {
+  border: 3px dashed #ccc;
+  border-radius: 8px;
+  margin: 12px;
+  padding: 30px 12px;
+  text-align: center;
+  cursor: pointer;
+  background: white;
+  font-size: 13px;
+  color: #888;
+  transition: all 0.2s;
+}
+
+.compare-drop-zone:hover { border-color: #667eea; background: #f0f3ff; }
+.compare-drop-zone.has-content { padding: 0; border: none; margin: 0; }
+
+.compare-frame-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 3px;
+  padding: 8px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.compare-frame-cell {
+  position: relative;
+  cursor: pointer;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid #eee;
+}
+
+.compare-frame-cell img { width: 100%; display: block; }
+
+.compare-frame-label {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0,0,0,0.65);
+  color: white;
+  font-size: 9px;
+  padding: 2px 4px;
+  text-align: center;
+}
+
+.compare-sync-bar {
+  background: #f0f3ff;
+  border: 1px solid #667eea;
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+/* === アーカイブ === */
+.archive-card {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 10px;
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.archive-card:hover {
+  border-color: #667eea;
+  box-shadow: 0 2px 8px rgba(102,126,234,0.15);
+}
+
+.archive-thumb {
+  width: 100px;
+  height: 70px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+  background: #eee;
+}
+
+.archive-info { flex: 1; min-width: 0; }
+.archive-title { font-size: 13px; font-weight: 600; color: #2c3e50; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.archive-meta { font-size: 11px; color: #888; }
+.archive-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+.archive-empty {
+  text-align: center;
+  padding: 48px 20px;
+  color: #aaa;
+  font-size: 14px;
+}
+
 video { display: none; }
 
 footer {
@@ -545,14 +668,17 @@ footer {
 
 <div class="container">
   <header>
-    <h1>📊 Sラボ投稿前チェックツール v2.2.0</h1>
-    <p>動画分析 → 13軸採点 → 機械学習による予測 → 改善提案</p>
+    <h1>🎯 Sラボ投稿フィードフォワードツール v3.0.0</h1>
+    <p>投稿後フィードフォワード診断 ｜ TikTok 3関門モデル ｜ 関門1(フック)→関門2(本編)→関門3(拡散)</p>
   </header>
 
   <div class="tabs">
     <div class="tab active" data-tab="step1">1️⃣ 動画処理</div>
-    <div class="tab" data-tab="step2">2️⃣ 採点入力</div>
-    <div class="tab" data-tab="step3">3️⃣ 予測 & 改善提案</div>
+    <div class="tab" data-tab="stepFF">🎯 投稿後診断</div>
+    <div class="tab" data-tab="step2">📝 採点入力</div>
+    <div class="tab" data-tab="step3">📊 予測（参考）</div>
+    <div class="tab" data-tab="step4">⚖️ 比較モード</div>
+    <div class="tab" data-tab="step5">📂 アーカイブ</div>
   </div>
 
   <!-- ===== Step 1: 動画処理 ===== -->
@@ -615,6 +741,131 @@ footer {
     </div>
 
     <video id="video" muted playsinline></video>
+  </div>
+
+  <!-- ===== 投稿後フィードフォワード診断 ===== -->
+  <div class="content" id="stepFF">
+    <div style="background:linear-gradient(135deg,#667eea,#764ba2); color:white; border-radius:12px; padding:20px; margin-bottom:20px;">
+      <div style="font-size:18px; font-weight:700; margin-bottom:6px;">🎯 投稿後フィードフォワード診断</div>
+      <div style="font-size:13px; opacity:0.95; line-height:1.7;">
+        投稿済みの動画とインサイトを使って「次の1本」を良くする診断です。<br>
+        マーケットの反応（実データ）から、どの関門で止まったかを特定し、次に変える1点を導きます。
+      </div>
+    </div>
+
+    <!-- 3関門モデルの図解 -->
+    <div style="background:#f8f9fa; border-radius:10px; padding:16px; margin-bottom:20px;">
+      <div style="font-size:13px; font-weight:600; color:#2c3e50; margin-bottom:12px;">📐 TikTok 3関門モデル</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <div style="flex:1; min-width:160px; background:white; border:2px solid #e74c3c; border-radius:8px; padding:12px;">
+          <div style="font-weight:700; color:#e74c3c; font-size:13px;">関門1（〜500再生）</div>
+          <div style="font-size:11px; color:#555; margin-top:4px;">足切り＝2秒視聴率（45%）<br>フックで勝負</div>
+        </div>
+        <div style="flex:1; min-width:160px; background:white; border:2px solid #f39c12; border-radius:8px; padding:12px;">
+          <div style="font-weight:700; color:#f39c12; font-size:13px;">関門2（500〜5,000）</div>
+          <div style="font-size:11px; color:#555; margin-top:4px;">フル視聴率・保存・シェア<br>本編の質が問われる</div>
+        </div>
+        <div style="flex:1; min-width:160px; background:white; border:2px solid #27ae60; border-radius:8px; padding:12px;">
+          <div style="font-weight:700; color:#27ae60; font-size:13px;">関門3（5,000〜）</div>
+          <div style="font-size:11px; color:#555; margin-top:4px;">率の維持＝普遍性<br>＋総視聴時間</div>
+        </div>
+      </div>
+      <div style="font-size:11px; color:#888; margin-top:10px; line-height:1.6;">
+        💡 再生数・おすすめ流入率は全て「結果」。要因は「フック設計」と「離脱を防ぐ本編設計」のみ。<br>
+        ⚠️ おすすめ流入率が低い（〜50%）のに再生数がある場合は「回遊流入」。実態はフック足切り相当。
+      </div>
+    </div>
+
+    <!-- 診断フロー -->
+    <div style="background:#e8f0fe; border:2px solid #667eea; border-radius:10px; padding:16px; margin-bottom:16px;">
+      <div style="font-size:14px; font-weight:600; color:#2c3e50; margin-bottom:12px;">🔬 診断を開始</div>
+      <div style="font-size:12px; color:#555; margin-bottom:14px; line-height:1.7;">
+        ① Step1で投稿済み動画を処理してタイル画像を生成<br>
+        ② TikTokインサイトのスクショを用意（概要・継続率グラフ・トラフィックソース）<br>
+        ③ 下のボタンでGoogle Driveにアップロード＋診断プロンプトをコピー＋Claude.aiを起動
+      </div>
+      <div class="btn-row" style="grid-template-columns:1fr;">
+        <button class="btn btn-primary" id="startFeedforwardBtn" style="font-size:15px; padding:16px;">
+          🎯 投稿後診断を開始（タイル画像＋インサイトをClaudeへ）
+        </button>
+      </div>
+      <div style="font-size:11px; color:#888; margin-top:10px; line-height:1.6;">
+        ※ タイル画像はGoogle Driveに自動アップロードされます<br>
+        ※ Claude.aiでは「インサイトのスクショを添付」→「プロンプトをペースト」→「送信」<br>
+        ※ ClaudeがGoogle Driveからタイル画像を取得し、インサイトと照合して診断します
+      </div>
+    </div>
+
+    <!-- インサイト読み取り補助：手動入力で関門を即判定 -->
+    <div style="background:white; border:1px solid #e0e0e0; border-radius:10px; padding:16px;">
+      <div style="font-size:14px; font-weight:600; color:#2c3e50; margin-bottom:12px;">⚡ クイック関門判定（数値を入れるだけ）</div>
+      <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
+        <div style="flex:1; min-width:140px;">
+          <label style="font-size:12px; color:#555; display:block; margin-bottom:4px;">再生数</label>
+          <input type="number" id="ffViews" placeholder="例: 8742" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; font-size:14px;">
+        </div>
+        <div style="flex:1; min-width:140px;">
+          <label style="font-size:12px; color:#555; display:block; margin-bottom:4px;">おすすめ流入率（%）</label>
+          <input type="number" id="ffRecommend" placeholder="例: 84.4" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; font-size:14px;">
+        </div>
+        <div style="flex:1; min-width:140px;">
+          <label style="font-size:12px; color:#555; display:block; margin-bottom:4px;">2秒視聴率（%）</label>
+          <input type="number" id="ff2sec" placeholder="例: 60" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; font-size:14px;">
+        </div>
+      </div>
+      <button class="btn btn-accent" id="quickDiagnoseBtn" style="width:100%; padding:12px;">⚡ 関門を判定</button>
+      <div id="quickDiagnoseResult" style="margin-top:14px;"></div>
+    </div>
+  </div>
+
+  <!-- ===== Step 4: 比較モード ===== -->
+  <div class="content" id="step4">
+    <div class="compare-sync-bar">
+      <span>🔗 同期スクロール</span>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+        <input type="checkbox" id="syncScrollCheck" checked style="cursor:pointer;">
+        <span>左右を同時にスクロール</span>
+      </label>
+      <span style="margin-left:auto; color:#888; font-size:11px;">各パネルに動画をドロップ、またはアーカイブから「比較に追加」</span>
+    </div>
+    <div style="display:flex; gap:12px;">
+      <!-- 左パネル -->
+      <div class="compare-panel" id="compareLeft">
+        <div class="compare-panel-header">
+          📹 左：分析対象
+          <span id="compareLeftLabel" style="font-size:11px; font-weight:normal; opacity:0.8;"></span>
+        </div>
+        <div id="compareLeftDrop" class="compare-drop-zone">
+          📹 動画をここにドロップ<br>またはアーカイブから追加
+          <input type="file" id="compareLeftInput" accept="video/*" style="display:none;">
+        </div>
+        <div id="compareLeftGrid" class="compare-frame-grid" style="display:none;"></div>
+      </div>
+      <!-- 右パネル -->
+      <div class="compare-panel" id="compareRight">
+        <div class="compare-panel-header right">
+          🎯 右：参考投稿
+          <span id="compareRightLabel" style="font-size:11px; font-weight:normal; opacity:0.8;"></span>
+        </div>
+        <div id="compareRightDrop" class="compare-drop-zone">
+          📹 動画をここにドロップ<br>またはアーカイブから追加
+          <input type="file" id="compareRightInput" accept="video/*" style="display:none;">
+        </div>
+        <div id="compareRightGrid" class="compare-frame-grid" style="display:none;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Step 5: アーカイブ ===== -->
+  <div class="content" id="step5">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+      <div style="font-size:15px; font-weight:600; color:#2c3e50;">📂 処理済み動画アーカイブ</div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-info" id="archiveSaveCurrentBtn" style="font-size:12px; padding:6px 12px;">💾 現在の動画を保存</button>
+        <button class="btn btn-secondary" id="archiveClearBtn" style="font-size:12px; padding:6px 12px;">🗑️ 全削除</button>
+      </div>
+    </div>
+    <div id="archiveList"></div>
   </div>
 
   <!-- ===== Step 2: 採点入力 ===== -->
@@ -722,7 +973,7 @@ footer {
   </div>
 
   <footer>
-    <div>Sラボ投稿前チェックツール v2.2.0 | フレームギャラリー搭載 | シーン変化検出エンジン搭載</div>
+    <div>Sラボ投稿フィードフォワードツール v3.0.0 | TikTok 3関門モデル | 投稿後診断対応</div>
     <div style="margin-top:6px;">
       <button id="changelogBtn" style="background:none; border:none; color:#667eea; cursor:pointer; font-size:11px; text-decoration:underline;">📋 バージョン履歴を表示</button>
     </div>
@@ -738,8 +989,45 @@ footer {
 
       <div style="font-size:12px; line-height:1.8; color:#444;">
 
-        <div style="background:#e8f0fe; padding:12px; border-radius:8px; margin-bottom:12px;">
-          <strong style="color:#667eea;">v2.2.0</strong> <span style="color:#888;">— 2026-05-27</span><br>
+        <div style="background:#e8f0fe; padding:12px; border-radius:8px; margin-bottom:12px; border:2px solid #667eea;">
+          <strong style="color:#667eea;">v3.0.0</strong> <span style="color:#888;">— 2026-06-08</span> 🎉 メジャーアップデート<br>
+          ・🎯 <strong>投稿後フィードフォワードツールへ転換</strong>（投稿前予測 → 投稿後診断がメイン）<br>
+          ・📐 <strong>TikTok 3関門モデル</strong>を実装：関門1(〜500・フック) / 関門2(〜5000・本編維持) / 関門3(5000〜・普遍性)<br>
+          ・🔬 「投稿後診断」タブ新設：タイル画像＋インサイトをClaudeへ送り関門診断＋次の1本への改善を出力<br>
+          ・⚡ クイック関門判定：再生数・おすすめ流入率・2秒視聴率を入れるだけで止まった関門を即判定<br>
+          ・回遊流入の検出（おすすめ流入率が低い再生数は「フック足切り相当」と見抜く）<br>
+          ・アジャイル思想：一度に全部直さず「次に変える1点」に絞るフィードフォワード設計<br>
+          ・予測モデルは「参考値」に格下げ（投稿後の実データ検証を主軸に）
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
+          <strong style="color:#667eea;">v2.5.0</strong> <span style="color:#888;">— 2026-06-08</span><br>
+          ・🎯 予測カードに目標数値と達成判定を併記（13サンプル分析ベース）<br>
+          ・最重要指標「おすすめ流入率」を強調（ヒット群91% vs 低調群67%）<br>
+          ・フル視聴率は動画長別の目標（〜10秒:25%、10-30秒:12%、30-60秒:7%、60秒〜:4%）<br>
+          ・📊 インサイトスクショ添付で投稿後の実績vs目標を検証（PART 4）<br>
+          ・継続率の離脱ポイント分析・トラフィックソース分析を追加<br>
+          ・アーカイブから「📹 分析対象へ」「🎯 参考へ」を個別指定可能に
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
+          <strong>v2.4.0</strong> <span style="color:#888;">— 2026-06-08</span><br>
+          ・⚖️ 比較モード追加：2本の動画を左右に並べてフレーム同期スクロール<br>
+          ・📂 アーカイブ機能：処理済み動画をlocalStorageに保存・呼び出し（最大30件）<br>
+          ・アーカイブから「比較に追加」で比較モードに即投入<br>
+          ・比較パネルは動画ドロップ or アーカイブから追加の2方式
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
+          <strong>v2.3.0</strong> <span style="color:#888;">— 2026-05-27</span><br>
+          ・🔗 Google Drive連携：タイル画像をFranklin Planner経由でDriveに自動アップロード<br>
+          ・Claude.aiでの画像手動添付が不要に（プロンプトペースト→送信のみ）<br>
+          ・ClaudeがGoogle Drive MCPで画像を自動取得する仕組み<br>
+          ・フォールバック：Drive接続失敗時は従来の手動添付方式に自動切替
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
+          <strong>v2.2.0</strong> <span style="color:#888;">— 2026-05-27</span><br>
           ・🎞️ 全フレームギャラリープレビュー搭載（S/M/Lサイズ切替）<br>
           ・フレームクリックで拡大表示（ライトボックス）、◀▶キーボード操作対応<br>
           ・冒頭2秒のHOOKフレームは赤枠で強調表示<br>
@@ -1095,7 +1383,146 @@ D) ターゲット像：
 }
 \`\`\`
 
+JSONは必ず回答の最後に配置してください。
+
+═══════════════════════════════
+【インサイトスクショがある場合（投稿後の検証）】
+═══════════════════════════════
+
+もしTikTokのインサイトスクリーンショット（概要・継続率・トラフィックソース）も添付されている場合は、
+PART 3の後に【PART 4】として以下の検証を追加してください：
+
+A) 実績 vs 目標の達成度チェック：
+
+■ 2秒視聴率（フック維持率）
+   最低ライン: 45% / 目標: 50%以上 / 優秀: 55%以上
+   → 実績値を読み取り、達成度を判定
+
+■ フル視聴率（動画長別の目標）
+   〜10秒: 25%以上 / 10-30秒: 12%以上 / 30-60秒: 7%以上 / 60秒〜: 4%以上
+   → 動画長に応じた目標と比較
+
+■ おすすめ流入率（最重要・拡散の指標）
+   最低ライン: 70% / 目標: 85%以上 / 優秀: 90%以上
+   ※ 70%未満は「既存ファン頼み」で新規拡散できていない危険信号
+   ※ 13サンプル分析でヒット群91% vs 低調群67%と最も明確な差が出た指標
+
+■ 新規フォロワー転換率
+   目標: 再生数の0.2%以上（例: 1万再生で20人）
+
+B) 継続率グラフの離脱ポイント分析：
+   - 何秒で大きく離脱しているか
+   - その秒数のテロップ・映像に何が起きているか（タイル画像と照合）
+   - 離脱を防ぐ具体的な改善案
+
+C) トラフィックソース分析：
+   - おすすめ％が低い場合：なぜ拡散しなかったか
+   - 個人プロフィール％が高い場合：サムネが優秀だった証拠（既存ユーザーがプロフ徘徊）
+   - 検索％が高い場合：検索ニーズに刺さっている
+
+D) 次回投稿への改善優先順位（実データに基づく具体策）
+
+═══════════════════════════════
+
 JSONは必ず回答の最後に配置してください。`;
+
+// ============================================
+// v3.0 投稿後フィードフォワード診断プロンプト
+// ============================================
+const FEEDFORWARD_PROMPT = `あなたはSラボ（バストケアサロン @beautybustn.nihonbashi）のTikTok投稿を分析する専門家です。
+これは「投稿後フィードフォワード診断」です。投稿済みの動画の実データを見て、次の投稿を良くするための学習を抽出します。
+
+添付物：
+1. タイル画像（動画のキーフレーム連結。🔴HOOKマーカーが冒頭2秒）
+2. インサイトのスクリーンショット（再生数・継続率グラフ・トラフィックソース）
+
+═══════════════════════════════
+【因果モデル：3関門の段階的拡散】
+═══════════════════════════════
+
+TikTokは段階的にレコメンド範囲を広げる。各関門を突破するごとに大きなセグメントへ拡散される。
+
+■ 関門1：初動セグメント（0〜500再生）
+　足切り要素 = 2秒視聴率（目安45%）
+　ここを抜けないと「バッターボックスにすら立てない」
+　※ ただしフル視聴率が非常に高い（ニッチ評価）と救済されることがある
+
+■ 関門2：拡散セグメント（500〜5,000再生）
+　評価要素 = フル視聴率・保存率・シェア率の重みが増す
+　本編の質（離脱の少なさ・保存したくなる価値）が問われる
+　※ 短尺すぎると総視聴時間が稼げず頭打ちになりうる
+
+■ 関門3：バズセグメント（5,000再生〜）
+　評価要素 = 各セグメントで率を「維持」できるか（一般層への普遍性）
+　＋ 総視聴時間（TikTokはユーザーの可処分時間獲得を最重視）
+
+【重要な大前提】
+- 再生数・おすすめ流入率・フォロワー数は全て「結果」であって「要因」ではない
+- 要因とは「フック設計」と「離脱を防ぐ本編設計」だけ
+- だから分析の核心は「どこで離脱したか・その時画面で何が起きていたか・なぜユーザー心理が離脱に動いたか」
+
+═══════════════════════════════
+【STEP 1：関門診断】
+═══════════════════════════════
+
+インサイトから「再生数」と「おすすめ流入率」を読み取り、どの関門で止まったか判定してください。
+
+判定ロジック：
+- おすすめ流入率が高い（70%以上）× 再生数 < 500　→【関門1足切り】フックの問題
+- おすすめ流入率が高い（70%以上）× 再生数 500〜5,000　→【関門2頭打ち】本編維持の問題
+- おすすめ流入率が高い（70%以上）× 再生数 5,000以上　→【関門3】拡散は成功、さらなる普遍性へ
+- おすすめ流入率が低い（〜50%）× 再生数そこそこ　→【回遊流入】実態はフック足切り相当。数字に騙されない
+
+═══════════════════════════════
+【STEP 2：止まった関門に応じた集中分析】
+═══════════════════════════════
+
+▼ 関門1で止まった場合（フックの問題）
+　冒頭2秒（🔴HOOKフレーム）を0.4秒刻みで分析：
+　- 0.0s：最初に目に入る要素は？スワイプを止める力があるか？
+　- 0.4s〜2.0s：視線の動き、テロップの読み取りやすさ、好奇心ギャップの有無
+　- 「なぜ最初の数百人がここで離脱したか」を具体的に
+　- 改善案：冒頭2秒をどう作り直すか（テロップ文言・最初のカット・矛盾フックの有無）
+
+▼ 関門2で止まった場合（本編維持の問題）
+　継続率グラフの「離脱が急降下している秒数」を特定：
+　- その秒数に対応するタイル画像のフレームを見る
+　- 画面で何が起きているか（テロップの間延び、同じ画の連続、話の停滞）
+　- なぜそこで離脱が起きたかをユーザー心理で説明
+　- 改善案：その離脱ポイントをどう埋めるか
+
+▼ 関門3まで来た場合（成功）
+　- 何が良くて拡散したのかを言語化（再現性のため）
+　- さらに伸ばすための一般層への普遍性のヒント
+
+▼ 回遊流入の場合
+　- レコメンド評価は実際には低い（フック足切り相当）と明示
+　- フックの改善に立ち返る
+
+═══════════════════════════════
+【STEP 3：フィードフォワード（次の1本への前送り）】
+═══════════════════════════════
+
+次の投稿で「1つだけ変えるとしたら何を変えるか」を明確に。
+アジャイルなので、一度に全部直さない。最もインパクトの大きい1点に絞る。
+
+- 変える要素：（具体的に1つ）
+- 仮説：（こう変えれば、こうなるはず）
+- 検証方法：（次の投稿でこの数字を見れば仮説が正しいか分かる）
+
+═══════════════════════════════
+【目標数値リファレンス】
+═══════════════════════════════
+- 2秒視聴率：45%が足切りライン、50%で安全圏、55%で優秀
+- フル視聴率：〜10秒で25%、10-30秒で12%、30-60秒で7%、60秒〜で4%が目安
+- 保存率：再生数の0.5%以上で良好、3%超えるとバズ予兆
+- 関門突破の目安：500 → 5,000 → それ以上
+
+自然な日本語で、STEP1→STEP2→STEP3の順に出力してください。
+冒頭に結論（どの関門で止まったか・次に何を変えるべきか）を1〜2行で書いてから詳細に入ってください。`;
+
+// Franklin PlannerサーバーのURL
+const FRANKLIN_SERVER = 'https://franklin-planner.onrender.com';
 
 // 「Claudeで採点を開始」ボタン
 document.getElementById('openClaudeBtn').addEventListener('click', async () => {
@@ -1107,65 +1534,135 @@ document.getElementById('openClaudeBtn').addEventListener('click', async () => {
 
   const result = currentResult[0];
   const tiles = result.tiles;
-  let fileNames = [];
+  let uploadedFileNames = [];
+  let useGoogleDrive = false;
 
-  if (tiles.length === 1) {
-    // ① 1枚の場合：そのままダウンロード
-    const blob = await canvasToBlob(tiles[0].canvas);
-    downloadBlob(blob, tiles[0].fileName);
-    fileNames.push(tiles[0].fileName);
-  } else {
-    // ① 複数枚の場合：全タイル画像をZIPでダウンロード
-    const zip = new JSZip();
-    for (const tile of tiles) {
+  // Google Driveアップロードを試行
+  const modal = document.getElementById('autoScoreModal');
+  modal.classList.add('active');
+  document.getElementById('modalSpinner').style.display = 'inline-block';
+  document.getElementById('modalIcon').textContent = '📤';
+  document.getElementById('modalTitle').textContent = 'Google Driveにアップロード中...';
+  document.getElementById('modalText').textContent = `${tiles.length}枚のタイル画像をアップロードしています`;
+  document.getElementById('modalProgress').style.display = 'none';
+  document.getElementById('modalActions').style.display = 'none';
+
+  try {
+    for (let i = 0; i < tiles.length; i++) {
+      document.getElementById('modalText').textContent = `アップロード中... (${i+1}/${tiles.length})`;
+      
+      const tile = tiles[i];
       const blob = await canvasToBlob(tile.canvas);
-      const buf = await blob.arrayBuffer();
-      zip.file(tile.fileName, buf);
-      fileNames.push(tile.fileName);
+      const base64 = await blobToBase64(blob);
+      
+      const response = await fetch(`${FRANKLIN_SERVER}/api/upload-tile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: tile.fileName,
+          base64data: base64,
+        }),
+      });
+      
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || 'アップロード失敗');
+      
+      uploadedFileNames.push(data.fileName);
     }
-    const cleaned = result.baseName.replace(/^\d+(\.\d+)?s_/, '');
-    const zipName = `${cleaned}_${result.duration.toFixed(2)}s_tiles_${tiles.length}枚.zip`;
-    downloadBlob(await zip.generateAsync({ type: 'blob' }), zipName);
+    useGoogleDrive = true;
+  } catch (e) {
+    console.warn('Google Driveアップロード失敗、フォールバック:', e.message);
+    useGoogleDrive = false;
   }
 
-  // ② 採点プロンプトをクリップボードにコピー
-  const tileInfo = tiles.length > 1
-    ? `\n\n※ タイル画像は${tiles.length}枚に分割されています。全て添付してください。各画像のヘッダーに[1/${tiles.length}]〜[${tiles.length}/${tiles.length}]と時間帯が記載されています。`
-    : '';
-  await navigator.clipboard.writeText(CLAUDE_SCORING_PROMPT + tileInfo);
+  modal.classList.remove('active');
 
-  // ③ claude.aiを新タブで開く
-  window.open('https://claude.ai/new', '_blank');
+  if (useGoogleDrive) {
+    // Google Drive経由：画像添付不要
+    const fileList = uploadedFileNames.map(f => `「${f}」`).join('、');
+    const driveInstruction = `\n\n【重要】分析対象の画像はGoogle Driveの「Sラボ_タイル画像」フォルダにあります。\nファイル名：${fileList}\nGoogle Driveから上記のファイルを読み取って分析してください。${tiles.length > 1 ? `\n※ タイル画像は${tiles.length}枚に分割されています。全て読み取ってください。` : ''}`;
+    
+    await navigator.clipboard.writeText(CLAUDE_SCORING_PROMPT + driveInstruction);
+    window.open('https://claude.ai/new', '_blank');
+    showClaudeGuideModal(uploadedFileNames, tiles.length, true);
+  } else {
+    // フォールバック：従来の手動添付方式
+    let fileNames = [];
+    if (tiles.length === 1) {
+      const blob = await canvasToBlob(tiles[0].canvas);
+      downloadBlob(blob, tiles[0].fileName);
+      fileNames.push(tiles[0].fileName);
+    } else {
+      const zip = new JSZip();
+      for (const tile of tiles) {
+        const blob = await canvasToBlob(tile.canvas);
+        const buf = await blob.arrayBuffer();
+        zip.file(tile.fileName, buf);
+        fileNames.push(tile.fileName);
+      }
+      const cleaned = result.baseName.replace(/^\d+(\.\d+)?s_/, '');
+      downloadBlob(await zip.generateAsync({ type: 'blob' }), `${cleaned}_${result.duration.toFixed(2)}s_tiles_${tiles.length}枚.zip`);
+    }
 
-  // ④ 案内モーダルを表示
-  showClaudeGuideModal(fileNames, tiles.length);
+    const tileInfo = tiles.length > 1
+      ? `\n\n※ タイル画像は${tiles.length}枚に分割されています。全て添付してください。`
+      : '';
+    await navigator.clipboard.writeText(CLAUDE_SCORING_PROMPT + tileInfo);
+    window.open('https://claude.ai/new', '_blank');
+    showClaudeGuideModal(fileNames, tiles.length, false);
+  }
 });
 
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 // 案内モーダル表示
-function showClaudeGuideModal(fileNames, tileCount) {
+function showClaudeGuideModal(fileNames, tileCount, isDriveMode) {
   const modal = document.getElementById('autoScoreModal');
   document.getElementById('modalSpinner').style.display = 'none';
-  document.getElementById('modalIcon').textContent = '📋';
-  document.getElementById('modalTitle').textContent = 'Claudeで採点する';
+  document.getElementById('modalIcon').textContent = isDriveMode ? '✅' : '📋';
+  document.getElementById('modalTitle').textContent = isDriveMode ? 'Google Driveにアップロード完了！' : 'Claudeで採点する';
   
-  const fileList = tileCount > 1
-    ? `タイル画像ZIP（${tileCount}枚）を解凍して全て添付`
-    : `タイル画像「${fileNames[0]}」を添付`;
-  
-  document.getElementById('modalText').innerHTML = `
-    <div style="text-align:left; font-size:13px; line-height:1.8;">
-      <strong>以下の手順でClaude.aiに採点させてください：</strong><br><br>
-      <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅ 完了</span>　${tileCount > 1 ? `タイル画像ZIP（${tileCount}枚）をダウンロード` : `タイル画像をダウンロード`}<br>
-      <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅ 完了</span>　採点プロンプトをクリップボードにコピー<br>
-      <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅ 完了</span>　Claude.aiを新タブで開いた<br><br>
-      <strong>Claude.aiで：</strong><br>
-      <span style="color:#e74c3c;">①</span> ${fileList}（クリップorドラッグ）<br>
-      <span style="color:#e74c3c;">②</span> プロンプトをペースト（Cmd/Ctrl+V）<br>
-      <span style="color:#e74c3c;">③</span> 送信 → 返答全体をコピー<br><br>
-      <strong>このツールに戻って：</strong><br>
-      <span style="color:#667eea;">④</span>「📥 採点結果JSONを貼り付け → 予測」を押す
-    </div>
-  `;
+  if (isDriveMode) {
+    document.getElementById('modalText').innerHTML = `
+      <div style="text-align:left; font-size:13px; line-height:1.8;">
+        <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅</span>　タイル画像${tileCount}枚をGoogle Driveにアップロード<br>
+        <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅</span>　採点プロンプト（Google Drive読み取り指示付き）をクリップボードにコピー<br>
+        <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅</span>　Claude.aiを新タブで開いた<br><br>
+        <strong>Claude.aiで：</strong><br>
+        <span style="color:#27ae60; font-weight:600;">① プロンプトをペースト（Cmd/Ctrl+V）</span><br>
+        <span style="color:#27ae60; font-weight:600;">② 送信するだけ！（画像添付不要🎉）</span><br><br>
+        <span style="font-size:11px; color:#888;">※ ClaudeがGoogle Drive MCPで画像を自動取得します</span><br>
+        <span style="font-size:11px; color:#888;">※ 投稿後の検証なら、インサイトのスクショも一緒に添付すると実績vs目標を分析します</span><br>
+        <span style="font-size:11px; color:#888;">※ 完了したら返答全体をコピーして「📥 貼り付け → 予測」を押してください</span>
+      </div>
+    `;
+  } else {
+    const fileList = tileCount > 1
+      ? `タイル画像ZIP（${tileCount}枚）を解凍して全て添付`
+      : `タイル画像「${fileNames[0]}」を添付`;
+    document.getElementById('modalText').innerHTML = `
+      <div style="text-align:left; font-size:13px; line-height:1.8;">
+        <span style="background:#fff3cd; padding:2px 6px; border-radius:4px;">⚠️</span>　Google Driveアップロードに失敗（フォールバックモード）<br><br>
+        <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅</span>　タイル画像をダウンロード<br>
+        <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅</span>　採点プロンプトをクリップボードにコピー<br>
+        <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅</span>　Claude.aiを新タブで開いた<br><br>
+        <strong>Claude.aiで：</strong><br>
+        <span style="color:#e74c3c;">①</span> ${fileList}（ドラッグ）<br>
+        <span style="color:#e74c3c;">②</span> プロンプトをペースト（Cmd/Ctrl+V）<br>
+        <span style="color:#e74c3c;">③</span> 送信 → 返答全体をコピー<br><br>
+        <strong>このツールに戻って：</strong><br>
+        <span style="color:#667eea;">④</span>「📥 採点結果JSONを貼り付け → 予測」を押す
+      </div>
+    `;
+  }
   document.getElementById('modalProgress').style.display = 'none';
   document.getElementById('modalActions').style.display = 'block';
   document.getElementById('modalCloseBtn').textContent = 'OK、やってみる';
@@ -1430,6 +1927,14 @@ function displayPredictions() {
   const followerGain = Math.round(Math.expm1(followerLog.value));
   const saveCount = Math.round(Math.expm1(saveLog.value));
   
+  // 動画長別のフル視聴率目標
+  const dur = parseFloat(document.getElementById('meta_duration').value) || 0;
+  let fullViewTarget, durationLabel;
+  if (dur <= 10) { fullViewTarget = 25; durationLabel = '〜10秒'; }
+  else if (dur <= 30) { fullViewTarget = 12; durationLabel = '10-30秒'; }
+  else if (dur <= 60) { fullViewTarget = 7; durationLabel = '30-60秒'; }
+  else { fullViewTarget = 4; durationLabel = '60秒〜'; }
+  
   // 総合スコア計算（採点軸の合計 / 最大値）
   const totalScore = Object.values(state.scores).reduce((a, b) => a + b, 0);
   const maxScore = 17 * 3; // 17軸 × 最大3点
@@ -1452,22 +1957,31 @@ function displayPredictions() {
       <div class="max">（${scorePercent}%）</div>
     </div>
     
-    <h3 style="margin-bottom:12px; color:#2c3e50;">📊 予測パフォーマンス</h3>
+    <h3 style="margin-bottom:12px; color:#2c3e50;">📊 予測パフォーマンス <span style="font-size:12px; font-weight:normal; color:#888;">（vs 目標数値）</span></h3>
     <div class="predictions-grid">
       <div class="prediction-card">
-        <h3>2秒視聴率</h3>
+        <h3>2秒視聴率（フック）</h3>
         <div class="prediction-value">${view2sec.value.toFixed(1)}%</div>
         <div class="prediction-range">±${view2sec.mae.toFixed(1)}%</div>
+        <div style="margin-top:6px; font-size:11px; ${view2sec.value >= 50 ? 'color:#27ae60;' : view2sec.value >= 45 ? 'color:#f39c12;' : 'color:#e74c3c;'}">
+          🎯 目標50% ${view2sec.value >= 55 ? '✅優秀' : view2sec.value >= 50 ? '✅達成' : view2sec.value >= 45 ? '△最低ライン' : '⚠️要改善'}
+        </div>
       </div>
       <div class="prediction-card">
         <h3>フル視聴率</h3>
         <div class="prediction-value">${fullView.value.toFixed(1)}%</div>
         <div class="prediction-range">±${fullView.mae.toFixed(1)}%</div>
+        <div style="margin-top:6px; font-size:11px; ${fullView.value >= fullViewTarget ? 'color:#27ae60;' : 'color:#e74c3c;'}">
+          🎯 目標${fullViewTarget}%（${durationLabel}） ${fullView.value >= fullViewTarget ? '✅達成' : '⚠️要改善'}
+        </div>
       </div>
       <div class="prediction-card">
-        <h3>おすすめ流入率</h3>
+        <h3>おすすめ流入率 ⭐</h3>
         <div class="prediction-value">${recommend.value.toFixed(1)}%</div>
         <div class="prediction-range">±${recommend.mae.toFixed(1)}%</div>
+        <div style="margin-top:6px; font-size:11px; ${recommend.value >= 85 ? 'color:#27ae60;' : recommend.value >= 70 ? 'color:#f39c12;' : 'color:#e74c3c;'}">
+          🎯 目標85% ${recommend.value >= 90 ? '✅優秀' : recommend.value >= 85 ? '✅達成' : recommend.value >= 70 ? '△最低ライン' : '⚠️既存ファン頼み'}
+        </div>
       </div>
       <div class="prediction-card">
         <h3>再生数</h3>
@@ -1478,12 +1992,19 @@ function displayPredictions() {
         <h3>新規フォロワー</h3>
         <div class="prediction-value">${fmt(followerGain)}</div>
         <div class="prediction-range">レンジ: ${fmt(Math.round(followerGain/3))} 〜 ${fmt(followerGain*3)}</div>
+        <div style="margin-top:6px; font-size:11px; color:#888;">
+          🎯 転換率0.2%目標（再生数比）
+        </div>
       </div>
       <div class="prediction-card">
         <h3>保存数</h3>
         <div class="prediction-value">${fmt(saveCount)}</div>
         <div class="prediction-range">レンジ: ${fmt(Math.round(saveCount/3))} 〜 ${fmt(saveCount*3)}</div>
       </div>
+    </div>
+
+    <div style="background:#f0f3ff; border-radius:8px; padding:12px 16px; margin-bottom:16px; font-size:12px; color:#555;">
+      💡 <strong>最重要指標は「おすすめ流入率」</strong>。13サンプル分析でヒット群91% vs 低調群67%と最も明確な差が出ました。これが85%を超えるかどうかが拡散の分かれ目です。
     </div>
   `;
   
@@ -2030,6 +2551,415 @@ document.getElementById('exportJsonBtn').addEventListener('click', () => {
 });
 
 document.getElementById('calculatePredictBtn').addEventListener('click', displayPredictions);
+
+// ============================================
+// 比較モード
+// ============================================
+const compareState = { left: null, right: null };
+const compareVideo = { left: document.createElement('video'), right: document.createElement('video') };
+compareVideo.left.muted = compareVideo.right.muted = true;
+
+async function loadComparePanel(side, file) {
+  const grid = document.getElementById(`compare${side === 'left' ? 'Left' : 'Right'}Grid`);
+  const drop = document.getElementById(`compare${side === 'left' ? 'Left' : 'Right'}Drop`);
+  const label = document.getElementById(`compare${side === 'left' ? 'Left' : 'Right'}Label`);
+  
+  drop.innerHTML = `<div style="padding:20px; color:#667eea;">⏳ 処理中... (${file.name})</div>`;
+  
+  const url = URL.createObjectURL(file);
+  const vid = compareVideo[side];
+  vid.src = url;
+  await new Promise(r => { vid.onloadedmetadata = r; setTimeout(r, 5000); });
+  
+  const duration = vid.duration;
+  const interval = duration <= 90 ? 0.4 : 0.5;
+  const frames = [];
+  
+  for (let t = 0; t < duration; t += interval) {
+    const ts = Math.round(t * 100) / 100;
+    await new Promise(r => {
+      let done = false;
+      const timer = setTimeout(() => { if (!done) { done = true; r(); } }, 500);
+      vid.onseeked = () => { if (!done) { done = true; clearTimeout(timer); setTimeout(r, 20); } };
+      vid.currentTime = ts;
+    });
+    const c = document.createElement('canvas');
+    c.width = vid.videoWidth; c.height = vid.videoHeight;
+    c.getContext('2d').drawImage(vid, 0, 0);
+    frames.push({ ts, canvas: c });
+    if (frames.length % 20 === 0) await new Promise(r => setTimeout(r, 0));
+  }
+  
+  URL.revokeObjectURL(url);
+  compareState[side] = { frames, duration, fileName: file.name };
+  label.textContent = `${file.name} (${duration.toFixed(1)}s / ${frames.length}f)`;
+  
+  drop.style.display = 'none';
+  grid.style.display = 'grid';
+  renderCompareGrid(side, frames);
+}
+
+function renderCompareGrid(side, frames) {
+  const grid = document.getElementById(`compare${side === 'left' ? 'Left' : 'Right'}Grid`);
+  grid.innerHTML = '';
+  frames.forEach((f, i) => {
+    const cell = document.createElement('div');
+    cell.className = 'compare-frame-cell';
+    const img = document.createElement('img');
+    img.src = f.canvas.toDataURL('image/jpeg', 0.6);
+    img.loading = 'lazy';
+    const lbl = document.createElement('div');
+    lbl.className = 'compare-frame-label';
+    const isHook = f.ts <= 2.0;
+    lbl.textContent = `${isHook ? '🔴' : ''}#${i+1} ${f.ts.toFixed(1)}s`;
+    cell.appendChild(img); cell.appendChild(lbl);
+    // ライトボックスで全画面表示
+    cell.onclick = () => {
+      galleryFrames = frames.map(fr => ({ ...fr, timestamp: fr.ts }));
+      openLightbox(i);
+    };
+    grid.appendChild(cell);
+  });
+}
+
+// 比較パネルのドロップ＆クリック
+['Left', 'Right'].forEach(side => {
+  const lower = side.toLowerCase();
+  const drop = document.getElementById(`compare${side}Drop`);
+  const input = document.getElementById(`compare${side}Input`);
+  
+  drop.addEventListener('click', () => input.click());
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.style.background = '#e8f0ff'; });
+  drop.addEventListener('dragleave', () => { drop.style.background = ''; });
+  drop.addEventListener('drop', async e => {
+    e.preventDefault(); drop.style.background = '';
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('video/')) await loadComparePanel(lower, file);
+  });
+  input.addEventListener('change', async e => {
+    if (e.target.files[0]) await loadComparePanel(lower, e.target.files[0]);
+  });
+});
+
+// 同期スクロール
+const leftGrid = document.getElementById('compareLeftGrid');
+const rightGrid = document.getElementById('compareRightGrid');
+let isSyncing = false;
+leftGrid.addEventListener('scroll', () => {
+  if (!isSyncing && document.getElementById('syncScrollCheck').checked) {
+    isSyncing = true;
+    rightGrid.scrollTop = leftGrid.scrollTop;
+    setTimeout(() => isSyncing = false, 50);
+  }
+});
+rightGrid.addEventListener('scroll', () => {
+  if (!isSyncing && document.getElementById('syncScrollCheck').checked) {
+    isSyncing = true;
+    leftGrid.scrollTop = rightGrid.scrollTop;
+    setTimeout(() => isSyncing = false, 50);
+  }
+});
+
+// ============================================
+// アーカイブ
+// ============================================
+const ARCHIVE_KEY = 'slab_archive_v1';
+
+function loadArchive() {
+  try { return JSON.parse(localStorage.getItem(ARCHIVE_KEY) || '[]'); }
+  catch { return []; }
+}
+
+function saveArchive(list) {
+  localStorage.setItem(ARCHIVE_KEY, JSON.stringify(list));
+}
+
+function saveToArchive(result) {
+  const list = loadArchive();
+  const thumb = result.tiles[0].canvas.toDataURL('image/jpeg', 0.5);
+  const entry = {
+    id: Date.now(),
+    fileName: result.baseName,
+    duration: result.duration,
+    frameCount: result.frames.length,
+    tileCount: result.tiles.length,
+    savedAt: new Date().toISOString(),
+    thumb,
+    // フレームデータは容量の関係で保存しない（サムネのみ）
+    tileThumb: result.tiles.map(t => t.canvas.toDataURL('image/jpeg', 0.4)),
+    stats: result.stats,
+  };
+  list.unshift(entry);
+  // 最大30件
+  if (list.length > 30) list.pop();
+  saveArchive(list);
+  renderArchive();
+}
+
+function renderArchive() {
+  const list = loadArchive();
+  const container = document.getElementById('archiveList');
+  if (list.length === 0) {
+    container.innerHTML = '<div class="archive-empty">📂 まだ保存された動画はありません<br><small>「💾 現在の動画を保存」で追加できます</small></div>';
+    return;
+  }
+  container.innerHTML = list.map((entry, i) => `
+    <div class="archive-card" data-id="${entry.id}">
+      <img class="archive-thumb" src="${entry.thumb}" alt="">
+      <div class="archive-info">
+        <div class="archive-title">📹 ${entry.fileName}</div>
+        <div class="archive-meta">
+          ${entry.duration.toFixed(1)}秒 / ${entry.frameCount}フレーム / タイル${entry.tileCount}枚<br>
+          保存: ${new Date(entry.savedAt).toLocaleString('ja-JP')}
+        </div>
+      </div>
+      <div class="archive-actions">
+        <button class="btn btn-accent" onclick="event.stopPropagation(); addToCompare('${entry.id}', 'left')" style="font-size:11px; padding:5px 8px;">📹 分析対象へ</button>
+        <button class="btn btn-info" onclick="event.stopPropagation(); addToCompare('${entry.id}', 'right')" style="font-size:11px; padding:5px 8px;">🎯 参考へ</button>
+        <button class="btn btn-secondary" onclick="event.stopPropagation(); deleteArchive('${entry.id}')" style="font-size:11px; padding:5px 8px;">🗑️</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function deleteArchive(id) {
+  const list = loadArchive().filter(e => String(e.id) !== String(id));
+  saveArchive(list);
+  renderArchive();
+}
+
+function addToCompare(id, side) {
+  const entry = loadArchive().find(e => String(e.id) === String(id));
+  if (!entry) return;
+  
+  // side未指定なら空いている方へ
+  if (!side) side = compareState.left === null ? 'left' : 'right';
+  const Label = side === 'left' ? 'Left' : 'Right';
+  const drop = document.getElementById(`compare${Label}Drop`);
+  const grid = document.getElementById(`compare${Label}Grid`);
+  const label = document.getElementById(`compare${Label}Label`);
+  
+  drop.style.display = 'none';
+  grid.style.display = 'grid';
+  grid.innerHTML = entry.tileThumb.map((src, i) => `
+    <div class="compare-frame-cell" style="grid-column:span 2;">
+      <img src="${src}" style="width:100%; display:block;" loading="lazy">
+      <div class="compare-frame-label">タイル ${i+1}/${entry.tileThumb.length}</div>
+    </div>
+  `).join('');
+  
+  label.textContent = `${entry.fileName} (${entry.duration.toFixed(1)}s)`;
+  compareState[side] = { fromArchive: true, entry };
+  
+  document.querySelector('[data-tab="step4"]').click();
+}
+
+// アーカイブ保存ボタン
+document.getElementById('archiveSaveCurrentBtn').addEventListener('click', () => {
+  if (!currentResult || currentResult.length === 0) {
+    alert('動画が処理されていません。Step1で動画をドロップしてください。');
+    return;
+  }
+  saveToArchive(currentResult[0]);
+  alert(`「${currentResult[0].baseName}」をアーカイブに保存しました。`);
+});
+
+document.getElementById('archiveClearBtn').addEventListener('click', () => {
+  if (confirm('アーカイブを全て削除しますか？')) {
+    localStorage.removeItem(ARCHIVE_KEY);
+    renderArchive();
+  }
+});
+
+// Step1の処理完了後、自動アーカイブ保存（オプション）
+function onProcessComplete(result) {
+  // 任意で自動保存したければここで saveToArchive(result)
+}
+
+// アーカイブ初期表示
+renderArchive();
+
+// ============================================
+// v3.0 投稿後フィードフォワード診断
+// ============================================
+
+// クイック関門判定
+function diagnoseGate(views, recommend, sec2) {
+  // 回遊流入の判定（おすすめ流入率が低いのに再生数がある）
+  if (recommend !== null && recommend <= 50 && views >= 500) {
+    return {
+      gate: '回遊流入',
+      color: '#9b59b6',
+      verdict: '⚠️ レコメンド評価は実は低い（フック足切り相当）',
+      detail: `おすすめ流入率${recommend}%は低い水準。この再生数(${views.toLocaleString()})はバズ投稿からのプロフ回遊で稼いだ可能性が高く、レコメンド本体の評価ではありません。数字に騙されず、フックの改善に立ち返るべきです。`,
+      focus: 'フック軸群（冒頭2秒）の改善',
+    };
+  }
+  // 関門1足切り
+  if (views < 500) {
+    return {
+      gate: '関門1で足切り',
+      color: '#e74c3c',
+      verdict: '🚧 フックの問題。バッターボックスに立てていない',
+      detail: `再生数${views.toLocaleString()}は関門1（〜500再生）の壁。${sec2 !== null ? `2秒視聴率${sec2}%。` : ''}最初の数百人が冒頭2秒で離脱しています。本編をいじっても無駄で、冒頭2秒のフック設計を作り直すのが最優先です。${sec2 !== null && sec2 >= 45 ? '※ただし2秒視聴率は悪くないので、サムネ/最初のカットの可能性も。' : ''}`,
+      focus: 'フック軸群（冒頭2秒）の改善',
+    };
+  }
+  // 関門2頭打ち
+  if (views < 5000) {
+    return {
+      gate: '関門2で頭打ち',
+      color: '#f39c12',
+      verdict: '📉 フックは突破。本編の維持に課題',
+      detail: `再生数${views.toLocaleString()}は関門2（500〜5,000）。フックは関門1を突破できています。ここからは本編の質（離脱の少なさ・保存価値）が問われます。継続率グラフで離脱が急降下している秒数を特定し、その瞬間に画面で何が起きているかを分析しましょう。`,
+      focus: '本編維持軸群（離脱ポイント）の改善',
+    };
+  }
+  // 関門3
+  return {
+    gate: '関門3（拡散成功）',
+    color: '#27ae60',
+    verdict: '🚀 拡散に成功。再現性の分析へ',
+    detail: `再生数${views.toLocaleString()}は関門3（5,000〜）に到達。フックも本編も評価されて一般層に拡散しています。何が良かったのかを言語化して再現性を高めましょう。さらに伸ばすには一般層への普遍性（実在人体・成果提示・能動語）と総視聴時間がカギです。`,
+    focus: '成功要因の言語化と横展開',
+  };
+}
+
+document.getElementById('quickDiagnoseBtn').addEventListener('click', () => {
+  const views = parseInt(document.getElementById('ffViews').value);
+  const recommend = document.getElementById('ffRecommend').value ? parseFloat(document.getElementById('ffRecommend').value) : null;
+  const sec2 = document.getElementById('ff2sec').value ? parseFloat(document.getElementById('ff2sec').value) : null;
+  
+  if (isNaN(views)) {
+    alert('再生数を入力してください。');
+    return;
+  }
+  
+  const d = diagnoseGate(views, recommend, sec2);
+  document.getElementById('quickDiagnoseResult').innerHTML = `
+    <div style="border:2px solid ${d.color}; border-radius:10px; padding:16px; background:${d.color}11;">
+      <div style="font-size:16px; font-weight:700; color:${d.color}; margin-bottom:8px;">${d.gate}</div>
+      <div style="font-size:14px; font-weight:600; color:#2c3e50; margin-bottom:10px;">${d.verdict}</div>
+      <div style="font-size:13px; color:#555; line-height:1.8; margin-bottom:12px;">${d.detail}</div>
+      <div style="background:white; border-radius:6px; padding:10px 14px; font-size:13px;">
+        <strong style="color:${d.color};">▶ 次に注力すべき：</strong> ${d.focus}
+      </div>
+    </div>
+  `;
+});
+
+// 投稿後診断を開始（Google Driveアップロード＋プロンプトコピー＋Claude起動）
+document.getElementById('startFeedforwardBtn').addEventListener('click', async () => {
+  if (!currentResult || currentResult.length === 0) {
+    alert('動画が処理されていません。\nまずStep1（動画処理）で投稿済み動画をドロップしてタイル画像を生成してください。');
+    document.querySelector('[data-tab="step1"]').click();
+    return;
+  }
+
+  const result = currentResult[0];
+  const tiles = result.tiles;
+  let uploadedFileNames = [];
+  let useGoogleDrive = false;
+
+  const modal = document.getElementById('autoScoreModal');
+  modal.classList.add('active');
+  document.getElementById('modalSpinner').style.display = 'inline-block';
+  document.getElementById('modalIcon').textContent = '📤';
+  document.getElementById('modalTitle').textContent = 'Google Driveにアップロード中...';
+  document.getElementById('modalText').textContent = `${tiles.length}枚のタイル画像をアップロードしています`;
+  document.getElementById('modalProgress').style.display = 'none';
+  document.getElementById('modalActions').style.display = 'none';
+
+  try {
+    for (let i = 0; i < tiles.length; i++) {
+      document.getElementById('modalText').textContent = `アップロード中... (${i+1}/${tiles.length})`;
+      const tile = tiles[i];
+      const blob = await canvasToBlob(tile.canvas);
+      const base64 = await blobToBase64(blob);
+      const response = await fetch(`${FRANKLIN_SERVER}/api/upload-tile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: tile.fileName, base64data: base64 }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || 'アップロード失敗');
+      uploadedFileNames.push(data.fileName);
+    }
+    useGoogleDrive = true;
+  } catch (e) {
+    console.warn('Drive upload failed:', e.message);
+    useGoogleDrive = false;
+  }
+
+  modal.classList.remove('active');
+
+  if (useGoogleDrive) {
+    const fileList = uploadedFileNames.map(f => `「${f}」`).join('、');
+    const driveInstruction = `\n\n【タイル画像】Google Driveの「Sラボ_タイル画像」フォルダにあります。\nファイル名：${fileList}\nGoogle Driveから読み取ってください。${tiles.length > 1 ? `\n※ ${tiles.length}枚に分割されています。全て読み取ってください。` : ''}\n\n【インサイト】このメッセージにTikTokインサイトのスクショを添付しています。そちらも参照してください。`;
+    await navigator.clipboard.writeText(FEEDFORWARD_PROMPT + driveInstruction);
+    window.open('https://claude.ai/new', '_blank');
+    showFeedforwardModal(uploadedFileNames, tiles.length, true);
+  } else {
+    let fileNames = [];
+    if (tiles.length === 1) {
+      const blob = await canvasToBlob(tiles[0].canvas);
+      downloadBlob(blob, tiles[0].fileName);
+      fileNames.push(tiles[0].fileName);
+    } else {
+      const zip = new JSZip();
+      for (const tile of tiles) {
+        const blob = await canvasToBlob(tile.canvas);
+        const buf = await blob.arrayBuffer();
+        zip.file(tile.fileName, buf);
+        fileNames.push(tile.fileName);
+      }
+      const cleaned = result.baseName.replace(/^\d+(\.\d+)?s_/, '');
+      downloadBlob(await zip.generateAsync({ type: 'blob' }), `${cleaned}_tiles_${tiles.length}枚.zip`);
+    }
+    await navigator.clipboard.writeText(FEEDFORWARD_PROMPT + '\n\n※ タイル画像とインサイトのスクショを添付してください。');
+    window.open('https://claude.ai/new', '_blank');
+    showFeedforwardModal(fileNames, tiles.length, false);
+  }
+});
+
+function showFeedforwardModal(fileNames, tileCount, isDriveMode) {
+  const modal = document.getElementById('autoScoreModal');
+  document.getElementById('modalSpinner').style.display = 'none';
+  document.getElementById('modalIcon').textContent = '🎯';
+  document.getElementById('modalTitle').textContent = '投稿後診断の準備完了';
+  
+  if (isDriveMode) {
+    document.getElementById('modalText').innerHTML = `
+      <div style="text-align:left; font-size:13px; line-height:1.8;">
+        <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅</span>　タイル画像${tileCount}枚をGoogle Driveにアップロード<br>
+        <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅</span>　診断プロンプトをクリップボードにコピー<br>
+        <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅</span>　Claude.aiを新タブで開いた<br><br>
+        <strong>Claude.aiで：</strong><br>
+        <span style="color:#e74c3c; font-weight:600;">① TikTokインサイトのスクショを添付</span><br>
+        　（概要・継続率グラフ・トラフィックソース）<br>
+        <span style="color:#27ae60; font-weight:600;">② プロンプトをペースト（Cmd/Ctrl+V）</span><br>
+        <span style="color:#27ae60; font-weight:600;">③ 送信</span><br><br>
+        <span style="font-size:11px; color:#888;">→ Claudeがタイル画像をDriveから取得し、インサイトと照合して関門診断＋次の1本への改善を出します</span>
+      </div>
+    `;
+  } else {
+    const fileList = tileCount > 1 ? `タイル画像ZIP（${tileCount}枚）を解凍して全て添付` : `タイル画像「${fileNames[0]}」を添付`;
+    document.getElementById('modalText').innerHTML = `
+      <div style="text-align:left; font-size:13px; line-height:1.8;">
+        <span style="background:#fff3cd; padding:2px 6px; border-radius:4px;">⚠️</span>　Google Driveアップロード失敗（フォールバック）<br><br>
+        <strong>Claude.aiで：</strong><br>
+        <span style="color:#e74c3c;">①</span> ${fileList}<br>
+        <span style="color:#e74c3c;">②</span> TikTokインサイトのスクショも添付<br>
+        <span style="color:#e74c3c;">③</span> プロンプトをペースト（Cmd/Ctrl+V）<br>
+        <span style="color:#e74c3c;">④</span> 送信
+      </div>
+    `;
+  }
+  document.getElementById('modalActions').style.display = 'block';
+  document.getElementById('modalCloseBtn').textContent = 'OK';
+  modal.classList.add('active');
+}
 
 // 初期化
 buildScoringUI();
