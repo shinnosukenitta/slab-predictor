@@ -1497,7 +1497,6 @@ document.getElementById('changelogBtn').addEventListener('click', () => {
 document.getElementById('changelogCloseBtn').addEventListener('click', () => {
   document.getElementById('changelogModal').classList.remove('active');
 });
-  if (!currentResult || currentResult.length === 0) { return; }
 
 // blobをbase64に変換
 function blobToBase64(blob) {
@@ -1987,9 +1986,10 @@ async function processVideos(files) {
   }
   currentResult = allResults;
   
-  // 最初の動画のdurationを採点フォームに反映
+  // durationを保持
   if (allResults.length > 0) {
-    document.getElementById('meta_duration').value = allResults[0].duration.toFixed(2);
+    const metaDur = document.getElementById('meta_duration');
+    if (metaDur) metaDur.value = allResults[0].duration.toFixed(2);
     state.videoData = { duration: allResults[0].duration };
   }
   
@@ -2845,8 +2845,7 @@ function showFeedforwardModal(fileNames, tileCount, isDriveMode) {
   modal.classList.add('active');
 }
 
-// 初期化
-buildScoringUI();
+// 初期化完了
 </script>
 
 </body>
