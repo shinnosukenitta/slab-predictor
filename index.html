@@ -701,9 +701,24 @@ footer {
       <canvas id="previewCanvas"></canvas>
       <div class="btn-row">
         <button class="btn btn-success" id="downloadRenamedBtn">📹 動画</button>
-        <button class="btn btn-primary" id="downloadTileBtn">🖼️ タイル画像</button>
+        <button class="btn btn-primary" id="downloadTileBtn">🖼️ タイル画像を保存</button>
         <button class="btn btn-info" id="downloadZipBtn">📦 個別ZIP</button>
         <button class="btn btn-accent" id="goToScoringBtn">🎯 投稿後診断へ</button>
+      </div>
+      <!-- iOS向け：画像を画面表示して長押し保存を促すモーダル -->
+      <div class="modal-overlay" id="tileViewerModal">
+        <div style="position:relative; max-width:96vw; max-height:92vh; text-align:center;">
+          <div style="color:white; font-size:13px; margin-bottom:10px;">
+            📱 画像を<strong>長押し</strong>して「写真に保存」を選択してください
+            <span id="tileViewerCounter" style="margin-left:8px; opacity:0.7;"></span>
+          </div>
+          <img id="tileViewerImg" style="max-width:96vw; max-height:80vh; border-radius:8px; display:block; margin:0 auto;">
+          <div style="display:flex; gap:12px; justify-content:center; margin-top:12px;">
+            <button class="btn btn-secondary" id="tileViewerPrevBtn" style="padding:8px 16px;">◀ 前</button>
+            <button class="btn btn-secondary" id="tileViewerCloseBtn" style="padding:8px 16px;">✕ 閉じる</button>
+            <button class="btn btn-primary" id="tileViewerNextBtn" style="padding:8px 16px;">次 ▶</button>
+          </div>
+        </div>
       </div>
 
       <!-- 全フレームギャラリー -->
@@ -2170,10 +2185,10 @@ document.getElementById('galleryLargeBtn').addEventListener('click', () => setGa
 function createTiledImage(frames, baseName, duration) {
   const MAX_PER_TILE = 20;
   const FRAMES_PER_ROW = 4;
-  const PADDING = 8;
-  const LABEL_HEIGHT = 28;
-  const HEADER_HEIGHT = 40;
-  const maxW = 320;
+  const PADDING = 6;
+  const LABEL_HEIGHT = 22;
+  const HEADER_HEIGHT = 34;
+  const maxW = 240; // 320→240に縮小（ファイルサイズ削減）
   
   const totalTiles = Math.ceil(frames.length / MAX_PER_TILE);
   const tiles = [];
@@ -2241,8 +2256,8 @@ function createTiledImage(frames, baseName, duration) {
     const totalStr = String(totalTiles).padStart(2, '0');
     const cleaned = baseName.replace(/^\d+(\.\d+)?s_/, '');
     const fileName = totalTiles > 1
-      ? `${cleaned}_${duration.toFixed(2)}s_tile_${tileNumStr}of${totalStr}_(${startTime}-${endTime}s).png`
-      : `${cleaned}_${duration.toFixed(2)}s_keyframes_tile.png`;
+      ? `${cleaned}_${duration.toFixed(2)}s_tile_${tileNumStr}of${totalStr}_(${startTime}-${endTime}s).jpg`
+      : `${cleaned}_${duration.toFixed(2)}s_keyframes_tile.jpg`;
     
     tiles.push({
       canvas: tc,
@@ -2261,7 +2276,7 @@ function createTiledImage(frames, baseName, duration) {
 }
 
 function canvasToBlob(c) {
-  return new Promise((r) => c.toBlob((b) => r(b), 'image/png'));
+  return new Promise((r) => c.toBlob((b) => r(b), 'image/jpeg', 0.75));
 }
 
 function downloadBlob(blob, filename) {
@@ -2290,13 +2305,52 @@ document.getElementById('downloadRenamedBtn').addEventListener('click', async ()
 document.getElementById('downloadTileBtn').addEventListener('click', async () => {
   if (!currentResult) return;
   const r = currentResult[0];
-  // 枚数に関わらず個別PNGとして順番にダウンロード
-  for (let i = 0; i < r.tiles.length; i++) {
-    const blob = await canvasToBlob(r.tiles[i].canvas);
-    downloadBlob(blob, r.tiles[i].fileName);
-    // 複数枚の場合は少し間隔を置く（ブラウザのダウンロード制限対策）
-    if (r.tiles.length > 1) await new Promise(res => setTimeout(res, 300));
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  
+  if (isIOS) {
+    // iOSの場合：画像をモーダルで表示→長押し保存を促す
+    openTileViewer(r.tiles);
+  } else {
+    // PC/Androidの場合：従来通りダウンロード
+    for (let i = 0; i < r.tiles.length; i++) {
+      const blob = await canvasToBlob(r.tiles[i].canvas);
+      downloadBlob(blob, r.tiles[i].fileName);
+      if (r.tiles.length > 1) await new Promise(res => setTimeout(res, 300));
+    }
   }
+});
+
+// タイルビューアモーダル（iOS向け）
+let tileViewerTiles = [];
+let tileViewerIdx = 0;
+
+async function openTileViewer(tiles) {
+  tileViewerTiles = tiles;
+  tileViewerIdx = 0;
+  await updateTileViewer();
+  document.getElementById('tileViewerModal').classList.add('active');
+}
+
+async function updateTileViewer() {
+  const tile = tileViewerTiles[tileViewerIdx];
+  const blob = await canvasToBlob(tile.canvas);
+  const url = URL.createObjectURL(blob);
+  document.getElementById('tileViewerImg').src = url;
+  document.getElementById('tileViewerCounter').textContent = 
+    `${tileViewerIdx + 1} / ${tileViewerTiles.length}枚`;
+  // 前後ボタンの表示制御
+  document.getElementById('tileViewerPrevBtn').style.opacity = tileViewerIdx > 0 ? '1' : '0.3';
+  document.getElementById('tileViewerNextBtn').style.opacity = tileViewerIdx < tileViewerTiles.length - 1 ? '1' : '0.3';
+}
+
+document.getElementById('tileViewerCloseBtn').addEventListener('click', () => {
+  document.getElementById('tileViewerModal').classList.remove('active');
+});
+document.getElementById('tileViewerPrevBtn').addEventListener('click', async () => {
+  if (tileViewerIdx > 0) { tileViewerIdx--; await updateTileViewer(); }
+});
+document.getElementById('tileViewerNextBtn').addEventListener('click', async () => {
+  if (tileViewerIdx < tileViewerTiles.length - 1) { tileViewerIdx++; await updateTileViewer(); }
 });
 
 document.getElementById('downloadZipBtn').addEventListener('click', async () => {
@@ -2910,9 +2964,20 @@ document.getElementById('startFeedforwardBtn').addEventListener('click', async (
 
   const result = currentResult[0];
   const tiles = result.tiles;
-  let uploadedFileNames = [];
-  let useGoogleDrive = false;
 
+  // ① ユーザー操作の直後（同期的に）クリップボードコピーとウィンドウ開放を先に実行
+  //    iOSはawaitの後だとブロックされるため、アップロード前に実行する
+  const claudeWindow = window.open('https://claude.ai/new', '_blank');
+  
+  // プレースホルダープロンプトをコピー（アップロード完了後に正式版で上書き）
+  const placeholderPrompt = FEEDFORWARD_PROMPT + '\n\n【タイル画像】アップロード中です。少々お待ちください...';
+  try {
+    await navigator.clipboard.writeText(placeholderPrompt);
+  } catch(e) {
+    console.warn('clipboard write failed:', e);
+  }
+
+  // ② モーダルでアップロード進捗を表示
   const modal = document.getElementById('autoScoreModal');
   modal.classList.add('active');
   document.getElementById('modalSpinner').style.display = 'inline-block';
@@ -2921,6 +2986,10 @@ document.getElementById('startFeedforwardBtn').addEventListener('click', async (
   document.getElementById('modalText').textContent = `${tiles.length}枚のタイル画像をアップロードしています`;
   document.getElementById('modalProgress').style.display = 'none';
   document.getElementById('modalActions').style.display = 'none';
+
+  // ③ アップロード実行
+  let uploadedFileNames = [];
+  let useGoogleDrive = false;
 
   try {
     for (let i = 0; i < tiles.length; i++) {
@@ -2946,11 +3015,15 @@ document.getElementById('startFeedforwardBtn').addEventListener('click', async (
 
   modal.classList.remove('active');
 
+  // ④ アップロード完了後に正式プロンプトでクリップボードを上書き
   if (useGoogleDrive) {
     const fileList = uploadedFileNames.map(f => `「${f}」`).join('、');
     const driveInstruction = `\n\n【タイル画像】Google Driveの「Sラボ_タイル画像」フォルダにあります。\nファイル名：${fileList}\nGoogle Driveから読み取ってください。${tiles.length > 1 ? `\n※ ${tiles.length}枚に分割されています。全て読み取ってください。` : ''}\n\n【インサイト】このメッセージにTikTokインサイトのスクショを添付しています。そちらも参照してください。`;
-    await navigator.clipboard.writeText(FEEDFORWARD_PROMPT + driveInstruction);
-    window.open('https://claude.ai/new', '_blank');
+    try {
+      await navigator.clipboard.writeText(FEEDFORWARD_PROMPT + driveInstruction);
+    } catch(e) {
+      console.warn('clipboard update failed:', e);
+    }
     showFeedforwardModal(uploadedFileNames, tiles.length, true);
   } else {
     // フォールバック：個別PNGとして順番にダウンロード
@@ -2961,8 +3034,9 @@ document.getElementById('startFeedforwardBtn').addEventListener('click', async (
       fileNames.push(tiles[i].fileName);
       if (tiles.length > 1) await new Promise(res => setTimeout(res, 300));
     }
-    await navigator.clipboard.writeText(FEEDFORWARD_PROMPT + '\n\n※ タイル画像とインサイトのスクショを添付してください。');
-    window.open('https://claude.ai/new', '_blank');
+    try {
+      await navigator.clipboard.writeText(FEEDFORWARD_PROMPT + '\n\n※ タイル画像とインサイトのスクショを添付してください。');
+    } catch(e) {}
     showFeedforwardModal(fileNames, tiles.length, false);
   }
 });
