@@ -2965,19 +2965,7 @@ document.getElementById('startFeedforwardBtn').addEventListener('click', async (
   const result = currentResult[0];
   const tiles = result.tiles;
 
-  // ① ユーザー操作の直後（同期的に）クリップボードコピーとウィンドウ開放を先に実行
-  //    iOSはawaitの後だとブロックされるため、アップロード前に実行する
-  const claudeWindow = window.open('https://claude.ai/new', '_blank');
-  
-  // プレースホルダープロンプトをコピー（アップロード完了後に正式版で上書き）
-  const placeholderPrompt = FEEDFORWARD_PROMPT + '\n\n【タイル画像】アップロード中です。少々お待ちください...';
-  try {
-    await navigator.clipboard.writeText(placeholderPrompt);
-  } catch(e) {
-    console.warn('clipboard write failed:', e);
-  }
-
-  // ② モーダルでアップロード進捗を表示
+  // アップロード進捗モーダル表示
   const modal = document.getElementById('autoScoreModal');
   modal.classList.add('active');
   document.getElementById('modalSpinner').style.display = 'inline-block';
@@ -2987,9 +2975,9 @@ document.getElementById('startFeedforwardBtn').addEventListener('click', async (
   document.getElementById('modalProgress').style.display = 'none';
   document.getElementById('modalActions').style.display = 'none';
 
-  // ③ アップロード実行
-  let uploadedFileNames = [];
+  let uploadedFiles = []; // { fileName, webViewLink } の配列
   let useGoogleDrive = false;
+  let finalPrompt = '';
 
   try {
     for (let i = 0; i < tiles.length; i++) {
@@ -3005,77 +2993,108 @@ document.getElementById('startFeedforwardBtn').addEventListener('click', async (
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       if (!data.success) throw new Error(data.error || 'アップロード失敗');
-      uploadedFileNames.push(data.fileName);
+      uploadedFiles.push({ fileName: data.fileName, webViewLink: data.webViewLink });
     }
     useGoogleDrive = true;
+
+    // プロンプトにファイル名と共有URLを両方含める
+    const fileLinks = uploadedFiles.map((f, i) =>
+      `${i+1}. ${f.fileName}\n   URL: ${f.webViewLink}`
+    ).join('\n');
+
+    finalPrompt = FEEDFORWARD_PROMPT
+      + `\n\n【タイル画像】以下のGoogle Drive共有リンクからアクセスしてください。\n${fileLinks}`
+      + (uploadedFiles.length > 1 ? `\n※ ${uploadedFiles.length}枚に分割されています。全て参照してください。` : '')
+      + `\n\n【インサイト】このメッセージにTikTokインサイトのスクショを添付しています。そちらも参照してください。`;
   } catch (e) {
     console.warn('Drive upload failed:', e.message);
     useGoogleDrive = false;
+    finalPrompt = FEEDFORWARD_PROMPT + '\n\n※ タイル画像とインサイトのスクショを添付してください。';
   }
 
-  modal.classList.remove('active');
-
-  // ④ アップロード完了後に正式プロンプトでクリップボードを上書き
-  if (useGoogleDrive) {
-    const fileList = uploadedFileNames.map(f => `「${f}」`).join('、');
-    const driveInstruction = `\n\n【タイル画像】Google Driveの「Sラボ_タイル画像」フォルダにあります。\nファイル名：${fileList}\nGoogle Driveから読み取ってください。${tiles.length > 1 ? `\n※ ${tiles.length}枚に分割されています。全て読み取ってください。` : ''}\n\n【インサイト】このメッセージにTikTokインサイトのスクショを添付しています。そちらも参照してください。`;
-    try {
-      await navigator.clipboard.writeText(FEEDFORWARD_PROMPT + driveInstruction);
-    } catch(e) {
-      console.warn('clipboard update failed:', e);
-    }
-    showFeedforwardModal(uploadedFileNames, tiles.length, true);
-  } else {
-    // フォールバック：個別PNGとして順番にダウンロード
-    let fileNames = [];
-    for (let i = 0; i < tiles.length; i++) {
-      const blob = await canvasToBlob(tiles[i].canvas);
-      downloadBlob(blob, tiles[i].fileName);
-      fileNames.push(tiles[i].fileName);
-      if (tiles.length > 1) await new Promise(res => setTimeout(res, 300));
-    }
-    try {
-      await navigator.clipboard.writeText(FEEDFORWARD_PROMPT + '\n\n※ タイル画像とインサイトのスクショを添付してください。');
-    } catch(e) {}
-    showFeedforwardModal(fileNames, tiles.length, false);
-  }
+  // アップロード完了 → モーダルにボタン2つを表示
+  document.getElementById('modalSpinner').style.display = 'none';
+  showFeedforwardModal(uploadedFiles.map(f => f.fileName), tiles.length, useGoogleDrive, finalPrompt);
 });
 
-function showFeedforwardModal(fileNames, tileCount, isDriveMode) {
+function showFeedforwardModal(fileNames, tileCount, isDriveMode, finalPrompt) {
   const modal = document.getElementById('autoScoreModal');
-  document.getElementById('modalSpinner').style.display = 'none';
-  document.getElementById('modalIcon').textContent = '🎯';
-  document.getElementById('modalTitle').textContent = '投稿後診断の準備完了';
-  
+  document.getElementById('modalIcon').textContent = isDriveMode ? '✅' : '⚠️';
+  document.getElementById('modalTitle').textContent = isDriveMode ? 'アップロード完了！' : 'フォールバックモード';
+
   if (isDriveMode) {
     document.getElementById('modalText').innerHTML = `
       <div style="text-align:left; font-size:13px; line-height:1.8;">
-        <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅</span>　タイル画像${tileCount}枚をGoogle Driveにアップロード<br>
-        <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅</span>　診断プロンプトをクリップボードにコピー<br>
-        <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅</span>　Claude.aiを新タブで開いた<br><br>
-        <strong>Claude.aiで：</strong><br>
-        <span style="color:#e74c3c; font-weight:600;">① TikTokインサイトのスクショを添付</span><br>
-        　（概要・継続率グラフ・トラフィックソース）<br>
-        <span style="color:#27ae60; font-weight:600;">② プロンプトをペースト（Cmd/Ctrl+V）</span><br>
-        <span style="color:#27ae60; font-weight:600;">③ 送信</span><br><br>
-        <span style="font-size:11px; color:#888;">→ Claudeがタイル画像をDriveから取得し、インサイトと照合して関門診断＋次の1本への改善を出します</span>
+        <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅</span>　タイル画像${tileCount}枚をGoogle Driveにアップロード完了<br><br>
+        <strong>次の手順：</strong><br>
+        <span style="color:#e74c3c; font-weight:600;">① プロンプトをコピー（下のボタン）</span><br>
+        <span style="color:#e74c3c; font-weight:600;">② Claude.aiを開く（下のボタン）</span><br>
+        <span style="color:#e74c3c; font-weight:600;">③ インサイトのスクショを添付 → ペースト → 送信</span><br><br>
+        <span style="font-size:11px; color:#888;">ClaudeがDriveからタイル画像を取得して診断します</span>
       </div>
     `;
   } else {
-    const fileList = tileCount > 1 ? `タイル画像ZIP（${tileCount}枚）を解凍して全て添付` : `タイル画像「${fileNames[0]}」を添付`;
     document.getElementById('modalText').innerHTML = `
       <div style="text-align:left; font-size:13px; line-height:1.8;">
-        <span style="background:#fff3cd; padding:2px 6px; border-radius:4px;">⚠️</span>　Google Driveアップロード失敗（フォールバック）<br><br>
-        <strong>Claude.aiで：</strong><br>
-        <span style="color:#e74c3c;">①</span> ${fileList}<br>
-        <span style="color:#e74c3c;">②</span> TikTokインサイトのスクショも添付<br>
-        <span style="color:#e74c3c;">③</span> プロンプトをペースト（Cmd/Ctrl+V）<br>
-        <span style="color:#e74c3c;">④</span> 送信
+        <span style="background:#fff3cd; padding:2px 6px; border-radius:4px;">⚠️</span>　Drive接続失敗（手動添付モード）<br><br>
+        <span style="color:#e74c3c; font-weight:600;">① プロンプトをコピー（下のボタン）</span><br>
+        <span style="color:#e74c3c; font-weight:600;">② Claude.aiを開く（下のボタン）</span><br>
+        <span style="color:#e74c3c; font-weight:600;">③ タイル画像＋インサイトを添付 → ペースト → 送信</span>
       </div>
     `;
   }
+
+  // ボタン2つをモーダルに表示（各ボタンが直接タップ → iOSでも動作）
   document.getElementById('modalActions').style.display = 'block';
-  document.getElementById('modalCloseBtn').textContent = 'OK';
+  document.getElementById('modalActions').innerHTML = `
+    <div style="display:flex; flex-direction:column; gap:10px; margin-top:12px;">
+      <button id="copyPromptBtn" class="btn btn-primary" style="font-size:15px; padding:14px;">
+        📋 ① プロンプトをコピー
+      </button>
+      <button id="openClaudeNewBtn" class="btn btn-success" style="font-size:15px; padding:14px;">
+        🤖 ② Claude.aiを開く
+      </button>
+      <button id="modalCloseBtnFF" class="btn btn-secondary" style="font-size:13px; padding:10px;">
+        閉じる
+      </button>
+    </div>
+  `;
+
+  // 各ボタンのイベント（ユーザーの直接タップ → iOSのポップアップ制限を回避）
+  document.getElementById('copyPromptBtn').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(finalPrompt);
+      document.getElementById('copyPromptBtn').textContent = '✅ コピーしました！';
+      document.getElementById('copyPromptBtn').style.background = '#27ae60';
+    } catch(e) {
+      // クリップボードAPIが使えない場合はテキストエリアで表示
+      const ta = document.createElement('textarea');
+      ta.value = finalPrompt;
+      ta.style.cssText = 'position:fixed;top:10px;left:10px;right:10px;height:200px;z-index:9999;font-size:11px;';
+      document.body.appendChild(ta);
+      ta.select();
+      alert('テキストを選択してコピーしてください（Cmd+C / 長押しコピー）');
+    }
+  });
+
+  document.getElementById('openClaudeNewBtn').addEventListener('click', () => {
+    window.open('https://claude.ai/new', '_blank');
+    document.getElementById('openClaudeNewBtn').textContent = '✅ 開きました！';
+    document.getElementById('openClaudeNewBtn').style.background = '#27ae60';
+  });
+
+  document.getElementById('modalCloseBtnFF').addEventListener('click', () => {
+    modal.classList.remove('active');
+    // ボタンを元に戻す
+    document.getElementById('modalActions').innerHTML = `
+      <button class="btn btn-secondary" id="modalCloseBtn" style="margin-top:12px;">閉じる</button>
+    `;
+    document.getElementById('modalCloseBtn').addEventListener('click', () => {
+      modal.classList.remove('active');
+      document.getElementById('modalProgress').style.display = 'block';
+    });
+  });
+
   modal.classList.add('active');
 }
 
