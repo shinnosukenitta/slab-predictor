@@ -2,7 +2,7 @@
 <!--
   ╔══════════════════════════════════════════════════════════╗
   ║  Sラボ投稿フィードフォワードツール                        ║
-  ║  Version: 3.1.0                                          ║
+  ║  Version: 3.2.0                                          ║
   ║  Last Updated: 2026-06-08                                ║
   ║  Author: 真之介 × Claude                                 ║
   ║                                                          ║
@@ -668,7 +668,7 @@ footer {
 
 <div class="container">
   <header>
-    <h1>🎯 Sラボ投稿フィードフォワードツール v3.1.0</h1>
+    <h1>🎯 Sラボ投稿フィードフォワードツール v3.2.0</h1>
     <p>投稿後フィードフォワード診断 ｜ TikTok 3関門モデル ｜ 関門1(フック)→関門2(本編)→関門3(拡散)</p>
   </header>
 
@@ -962,7 +962,7 @@ footer {
     </div>
   </div>
   <footer>
-    <div>Sラボ投稿フィードフォワードツール v3.1.0 | サンプルDB搭載 | 採点タブ廃止</div>
+    <div>Sラボ投稿フィードフォワードツール v3.2.0 | iOS対応 | Drive連携 | サンプルDB自動保存</div>
     <div style="margin-top:6px;">
       <button id="changelogBtn" style="background:none; border:none; color:#667eea; cursor:pointer; font-size:11px; text-decoration:underline;">📋 バージョン履歴を表示</button>
     </div>
@@ -979,6 +979,25 @@ footer {
       <div style="font-size:12px; line-height:1.8; color:#444;">
 
         <div style="background:#e8f0fe; padding:12px; border-radius:8px; margin-bottom:12px; border:2px solid #667eea;">
+          <strong style="color:#667eea;">v3.2.0</strong> <span style="color:#888;">— 2026-06-11</span><br>
+          ・📱 iOSとPCでフローを自動分岐（デバイス判定）<br>
+          ・iPhone：Driveアップロードをスキップ→タイル画像ビューア表示→直接添付フロー<br>
+          ・PC：Driveアップロード→URLをプロンプトに埋め込み→インサイトのみ添付でOK<br>
+          ・プロンプトもデバイス別に最適化（iPhone=添付前提 / PC=Drive URL参照）<br>
+          ・モーダルを「プロンプトをコピー」「Claude.aiを開く」の2ボタン方式に（iOSポップアップ制限を回避）
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
+          <strong>v3.1.0</strong> <span style="color:#888;">— 2026-06-09</span><br>
+          ・📊 サンプルDB機能追加（投稿後診断の結果をlocalStorageに自動蓄積）<br>
+          ・採点入力・予測（参考）タブを廃止（3関門モデルに移行）<br>
+          ・診断プロンプトにJSON構造化出力を追加（insight/hook/body/feedforwardの自動抽出）<br>
+          ・「診断結果を貼り戻す」ボタン→サンプルDBに全データ自動保存<br>
+          ・Franklin Planner /api/upload-tile エンドポイント実装（Google Workspace共有ドライブ連携）<br>
+          ・タイル画像をJPEG 75%品質に変換（4.1MB→約1MB、ファイルサイズ75%削減）
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
           <strong style="color:#667eea;">v3.0.0</strong> <span style="color:#888;">— 2026-06-08</span> 🎉 メジャーアップデート<br>
           ・🎯 <strong>投稿後フィードフォワードツールへ転換</strong>（投稿前予測 → 投稿後診断がメイン）<br>
           ・📐 <strong>TikTok 3関門モデル</strong>を実装：関門1(〜500・フック) / 関門2(〜5000・本編維持) / 関門3(5000〜・普遍性)<br>
@@ -2964,8 +2983,20 @@ document.getElementById('startFeedforwardBtn').addEventListener('click', async (
 
   const result = currentResult[0];
   const tiles = result.tiles;
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 
-  // アップロード進捗モーダル表示
+  // iPhoneはDriveアップロードをスキップ → タイル画像をビューアで表示して直接添付
+  if (isIOS) {
+    const finalPrompt = FEEDFORWARD_PROMPT
+      + '\n\n【タイル画像】添付の画像ファイルがタイル画像です。全枚を参照してください。'
+      + '\n\n【インサイト】添付のスクショがTikTokインサイトです。両方を照合して診断してください。';
+    showFeedforwardModal([], tiles.length, false, finalPrompt, true);
+    // タイル画像ビューアを自動で開く
+    openTileViewer(tiles);
+    return;
+  }
+
+  // PC/Android：Driveアップロードフロー
   const modal = document.getElementById('autoScoreModal');
   modal.classList.add('active');
   document.getElementById('modalSpinner').style.display = 'inline-block';
@@ -3017,42 +3048,62 @@ document.getElementById('startFeedforwardBtn').addEventListener('click', async (
   showFeedforwardModal(uploadedFiles.map(f => f.fileName), tiles.length, useGoogleDrive, finalPrompt);
 });
 
-function showFeedforwardModal(fileNames, tileCount, isDriveMode, finalPrompt) {
+function showFeedforwardModal(fileNames, tileCount, isDriveMode, finalPrompt, isIOSMode = false) {
   const modal = document.getElementById('autoScoreModal');
-  document.getElementById('modalIcon').textContent = isDriveMode ? '✅' : '⚠️';
-  document.getElementById('modalTitle').textContent = isDriveMode ? 'アップロード完了！' : 'フォールバックモード';
 
-  if (isDriveMode) {
+  // --- アイコン・タイトル ---
+  if (isIOSMode) {
+    document.getElementById('modalIcon').textContent = '📱';
+    document.getElementById('modalTitle').textContent = 'タイル画像を保存してください';
+  } else if (isDriveMode) {
+    document.getElementById('modalIcon').textContent = '✅';
+    document.getElementById('modalTitle').textContent = 'アップロード完了！';
+  } else {
+    document.getElementById('modalIcon').textContent = '⚠️';
+    document.getElementById('modalTitle').textContent = 'Drive失敗（手動添付モード）';
+  }
+
+  // --- 手順テキスト ---
+  if (isIOSMode) {
     document.getElementById('modalText').innerHTML = `
-      <div style="text-align:left; font-size:13px; line-height:1.8;">
-        <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅</span>　タイル画像${tileCount}枚をGoogle Driveにアップロード完了<br><br>
-        <strong>次の手順：</strong><br>
+      <div style="text-align:left; font-size:13px; line-height:1.9;">
+        <span style="color:#e74c3c; font-weight:600;">① タイル画像を長押し→「写真に保存」</span><br>
+        　（複数枚の場合は「次▶」で全枚保存）<br>
+        <span style="color:#e74c3c; font-weight:600;">② プロンプトをコピー（下のボタン）</span><br>
+        <span style="color:#e74c3c; font-weight:600;">③ Claude.aiを開く（下のボタン）</span><br>
+        <span style="color:#e74c3c; font-weight:600;">④ タイル画像＋インサイトを添付→ペースト→送信</span>
+      </div>
+    `;
+  } else if (isDriveMode) {
+    document.getElementById('modalText').innerHTML = `
+      <div style="text-align:left; font-size:13px; line-height:1.9;">
+        <span style="background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅</span>　タイル画像${tileCount}枚をDriveにアップロード完了<br><br>
         <span style="color:#e74c3c; font-weight:600;">① プロンプトをコピー（下のボタン）</span><br>
         <span style="color:#e74c3c; font-weight:600;">② Claude.aiを開く（下のボタン）</span><br>
-        <span style="color:#e74c3c; font-weight:600;">③ インサイトのスクショを添付 → ペースト → 送信</span><br><br>
-        <span style="font-size:11px; color:#888;">ClaudeがDriveからタイル画像を取得して診断します</span>
+        <span style="color:#e74c3c; font-weight:600;">③ インサイトのスクショだけ添付→ペースト→送信</span><br><br>
+        <span style="font-size:11px; color:#888;">タイル画像はDriveのURLからClaudeが自動取得します</span>
       </div>
     `;
   } else {
     document.getElementById('modalText').innerHTML = `
-      <div style="text-align:left; font-size:13px; line-height:1.8;">
-        <span style="background:#fff3cd; padding:2px 6px; border-radius:4px;">⚠️</span>　Drive接続失敗（手動添付モード）<br><br>
+      <div style="text-align:left; font-size:13px; line-height:1.9;">
+        <span style="background:#fff3cd; padding:2px 6px; border-radius:4px;">⚠️</span>　Drive接続失敗<br><br>
         <span style="color:#e74c3c; font-weight:600;">① プロンプトをコピー（下のボタン）</span><br>
         <span style="color:#e74c3c; font-weight:600;">② Claude.aiを開く（下のボタン）</span><br>
-        <span style="color:#e74c3c; font-weight:600;">③ タイル画像＋インサイトを添付 → ペースト → 送信</span>
+        <span style="color:#e74c3c; font-weight:600;">③ タイル画像＋インサイトを添付→ペースト→送信</span>
       </div>
     `;
   }
 
-  // ボタン2つをモーダルに表示（各ボタンが直接タップ → iOSでも動作）
+  // --- ボタン（直接タップ → iOSでも動作） ---
   document.getElementById('modalActions').style.display = 'block';
   document.getElementById('modalActions').innerHTML = `
     <div style="display:flex; flex-direction:column; gap:10px; margin-top:12px;">
       <button id="copyPromptBtn" class="btn btn-primary" style="font-size:15px; padding:14px;">
-        📋 ① プロンプトをコピー
+        📋 プロンプトをコピー
       </button>
       <button id="openClaudeNewBtn" class="btn btn-success" style="font-size:15px; padding:14px;">
-        🤖 ② Claude.aiを開く
+        🤖 Claude.aiを開く
       </button>
       <button id="modalCloseBtnFF" class="btn btn-secondary" style="font-size:13px; padding:10px;">
         閉じる
@@ -3060,20 +3111,19 @@ function showFeedforwardModal(fileNames, tileCount, isDriveMode, finalPrompt) {
     </div>
   `;
 
-  // 各ボタンのイベント（ユーザーの直接タップ → iOSのポップアップ制限を回避）
   document.getElementById('copyPromptBtn').addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(finalPrompt);
       document.getElementById('copyPromptBtn').textContent = '✅ コピーしました！';
       document.getElementById('copyPromptBtn').style.background = '#27ae60';
     } catch(e) {
-      // クリップボードAPIが使えない場合はテキストエリアで表示
+      // フォールバック：テキストエリアで選択コピー
       const ta = document.createElement('textarea');
       ta.value = finalPrompt;
       ta.style.cssText = 'position:fixed;top:10px;left:10px;right:10px;height:200px;z-index:9999;font-size:11px;';
       document.body.appendChild(ta);
       ta.select();
-      alert('テキストを選択してコピーしてください（Cmd+C / 長押しコピー）');
+      alert('テキストを選択してコピーしてください（長押しコピー）');
     }
   });
 
@@ -3085,7 +3135,6 @@ function showFeedforwardModal(fileNames, tileCount, isDriveMode, finalPrompt) {
 
   document.getElementById('modalCloseBtnFF').addEventListener('click', () => {
     modal.classList.remove('active');
-    // ボタンを元に戻す
     document.getElementById('modalActions').innerHTML = `
       <button class="btn btn-secondary" id="modalCloseBtn" style="margin-top:12px;">閉じる</button>
     `;
