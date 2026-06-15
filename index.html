@@ -2,7 +2,7 @@
 <!--
   ╔══════════════════════════════════════════════════════════╗
   ║  Sラボ投稿フィードフォワードツール                        ║
-  ║  Version: 3.5.0                                          ║
+  ║  Version: 3.5.1                                          ║
   ║  Last Updated: 2026-06-08                                ║
   ║  Author: 真之介 × Claude                                 ║
   ║                                                          ║
@@ -674,7 +674,7 @@ footer {
 
 <div class="container">
   <header>
-    <h1>🎯 S-LABO フィードフォワードツール v3.5.0</h1>
+    <h1>🎯 S-LABO フィードフォワードツール v3.5.1</h1>
     <p>投稿後フィードフォワード診断 ｜ TikTok 3関門モデル ｜ 関門1(フック)→関門2(本編)→関門3(拡散)</p>
   </header>
 
@@ -950,7 +950,7 @@ footer {
     </div>
   </div>
   <footer>
-    <div>S-LABO フィードフォワードツール v3.5.0 | フック0.15秒精細化 | Drive連携 | サンプルDB</div>
+    <div>S-LABO フィードフォワードツール v3.5.1 | フック0.15秒精細化 | Drive連携 | サンプルDB</div>
     <div style="margin-top:6px;">
       <button id="changelogBtn" style="background:none; border:none; color:#667eea; cursor:pointer; font-size:11px; text-decoration:underline;">📋 バージョン履歴を表示</button>
     </div>
@@ -2006,14 +2006,16 @@ function generateFrameName(baseName, duration, idx, total, ts) {
 function seekVideo(time) {
   return new Promise((resolve) => {
     let resolved = false;
+    // 重いデバイス対応：タイムアウトを1.5秒に延長
     const timeout = setTimeout(() => {
       if (!resolved) { resolved = true; resolve(); }
-    }, 500);
+    }, 1500);
     video.onseeked = () => {
       if (!resolved) {
         resolved = true;
         clearTimeout(timeout);
-        setTimeout(resolve, 20);
+        // 描画が確実に反映されるまで待つ
+        setTimeout(resolve, 30);
       }
     };
     video.currentTime = time;
@@ -2084,6 +2086,13 @@ async function processVideos(files) {
       }
     }
     
+    // フレームが1枚も取れなかった場合はスキップ
+    if (frames.length === 0) {
+      console.warn(`${file.name}: フレームを取得できませんでした`);
+      URL.revokeObjectURL(url);
+      continue;
+    }
+    
     const tiles = createTiledImage(frames, baseName, duration);
     allResults.push({
       originalFile: file, baseName, duration,
@@ -2114,20 +2123,46 @@ async function processVideos(files) {
     state.videoData = { duration: allResults[0].duration };
   }
   
-  setTimeout(() => {
+  // プレビュー表示（requestAnimationFrameで確実にレンダリング後に実行）
+  requestAnimationFrame(() => {
     progress.classList.remove('active');
     preview.classList.add('active');
-    if (allResults.length >= 1) {
-      // 最初のタイル画像をプレビュー表示
-      const firstTile = allResults[0].tiles[0];
-      canvas.width = firstTile.width;
-      canvas.height = firstTile.height;
-      canvas.getContext('2d').drawImage(firstTile.canvas, 0, 0);
-      
-      // フレームギャラリーを構築
-      buildFrameGallery(allResults[0]);
+    // レイアウト確定後にcanvas描画（preview表示直後はcanvasサイズが取れないことがあるため二段階）
+    requestAnimationFrame(() => renderPreviewTile());
+  });
+}
+
+// プレビュータイルを描画（リトライ機能付き）
+function renderPreviewTile(retryCount = 0) {
+  if (!currentResult || currentResult.length === 0) return;
+  try {
+    const firstTile = currentResult[0].tiles[0];
+    // タイルcanvasが正しく生成されているか検証
+    if (!firstTile || !firstTile.canvas || firstTile.width === 0 || firstTile.height === 0) {
+      if (retryCount < 5) {
+        // まだ準備できていなければ100ms後にリトライ（最大5回）
+        setTimeout(() => renderPreviewTile(retryCount + 1), 100);
+      }
+      return;
     }
-  }, 500);
+    const canvas = document.getElementById('previewCanvas');
+    canvas.width = firstTile.width;
+    canvas.height = firstTile.height;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(firstTile.canvas, 0, 0);
+    
+    // フレームギャラリーを構築
+    buildFrameGallery(currentResult[0]);
+  } catch (e) {
+    console.error('プレビュー描画エラー:', e);
+    if (retryCount < 5) {
+      setTimeout(() => renderPreviewTile(retryCount + 1), 200);
+    } else {
+      // 最終的に失敗したらユーザーに通知
+      progressText.textContent = '⚠️ プレビュー表示に失敗しました。タイル画像のダウンロードは可能です。';
+    }
+  }
 }
 
 // ============================================
