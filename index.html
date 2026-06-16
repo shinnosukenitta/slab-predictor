@@ -2,7 +2,7 @@
 <!--
   ╔══════════════════════════════════════════════════════════╗
   ║  Sラボ投稿フィードフォワードツール                        ║
-  ║  Version: 3.8.1                                          ║
+  ║  Version: 3.9.0                                          ║
   ║  Last Updated: 2026-06-08                                ║
   ║  Author: 真之介 × Claude                                 ║
   ║                                                          ║
@@ -674,7 +674,7 @@ footer {
 
 <div class="container">
   <header>
-    <h1>🎯 S-LABO フィードフォワードツール v3.8.1</h1>
+    <h1>🎯 S-LABO フィードフォワードツール v3.9.0</h1>
     <p>投稿後フィードフォワード診断 ｜ TikTok 3関門モデル ｜ 関門1(フック)→関門2(本編)→関門3(拡散)</p>
   </header>
 
@@ -711,18 +711,22 @@ footer {
         <button class="btn btn-info" id="downloadZipBtn">📦 個別ZIP</button>
         <button class="btn btn-accent" id="goToScoringBtn">🎯 投稿後診断へ</button>
       </div>
-      <!-- iOS向け：全タイル画像を縦に並べてまとめて長押し保存 -->
+      <!-- iOS向け：全タイル画像を縦に並べて表示＋まとめて共有 -->
       <div class="modal-overlay" id="tileViewerModal">
         <div style="position:relative; width:100%; max-width:96vw; max-height:92vh; display:flex; flex-direction:column;">
           <div style="color:white; font-size:13px; margin-bottom:10px; text-align:center; flex-shrink:0;">
-            📱 画像を<strong>長押し</strong>→「○枚の画像を保存」でまとめて保存
+            📲 「まとめて共有」→「画像を保存」で一括保存
             <span id="tileViewerCounter" style="margin-left:8px; opacity:0.7;"></span>
           </div>
           <div id="tileViewerScroll" style="overflow-y:auto; flex:1; -webkit-overflow-scrolling:touch; text-align:center; padding-bottom:8px;">
             <!-- ここに全タイル画像が縦に並ぶ -->
           </div>
-          <div style="display:flex; gap:12px; justify-content:center; margin-top:12px; flex-shrink:0;">
-            <button class="btn btn-secondary" id="tileViewerCloseBtn" style="padding:8px 24px;">✕ 閉じる</button>
+          <div style="display:flex; gap:10px; justify-content:center; margin-top:12px; flex-shrink:0;">
+            <button class="btn btn-primary" id="tileShareBtn" style="padding:10px 20px;">📲 まとめて共有</button>
+            <button class="btn btn-secondary" id="tileViewerCloseBtn" style="padding:10px 20px;">✕ 閉じる</button>
+          </div>
+          <div style="color:white; font-size:11px; opacity:0.6; text-align:center; margin-top:8px; flex-shrink:0;">
+            ※ 共有が使えない場合は画像を長押しして保存
           </div>
         </div>
       </div>
@@ -950,7 +954,7 @@ footer {
     </div>
   </div>
   <footer>
-    <div>S-LABO フィードフォワードツール v3.8.1 | フック0.15秒精細化 | Drive連携 | サンプルDB</div>
+    <div>S-LABO フィードフォワードツール v3.9.0 | フック0.15秒精細化 | Drive連携 | サンプルDB</div>
     <div style="margin-top:6px;">
       <button id="changelogBtn" style="background:none; border:none; color:#667eea; cursor:pointer; font-size:11px; text-decoration:underline;">📋 バージョン履歴を表示</button>
     </div>
@@ -967,6 +971,13 @@ footer {
       <div style="font-size:12px; line-height:1.8; color:#444;">
 
         <div style="background:#e8f0fe; padding:12px; border-radius:8px; margin-bottom:12px; border:2px solid #667eea;">
+          <strong style="color:#667eea;">v3.9.0</strong> <span style="color:#888;">— 2026-06-11</span> 📲 iOSまとめて共有<br>
+          ・Web Share APIで全タイル画像を一括共有→「画像を保存」で写真アプリにまとめて保存<br>
+          ・iOSの共有シート経由なので長押し連打が不要に<br>
+          ・Web Share非対応環境では自動でボタンを隠し、長押し保存に誘導
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
           <strong style="color:#667eea;">v3.8.1</strong> <span style="color:#888;">— 2026-06-11</span> ⚡ 描画高速化<br>
           ・フレームギャラリーの描画を分割実行（20枚ごとにUIへ制御を返す）<br>
           ・大量フレームでも画面が固まらず、プレビューが先に表示される<br>
@@ -2478,14 +2489,16 @@ document.getElementById('downloadTileBtn').addEventListener('click', async () =>
   }
 });
 
-// タイルビューア（iOS向け：全タイルを縦に並べてまとめて保存）
+// タイルビューア（iOS向け：全タイルを縦に並べて表示＋まとめて共有）
+let tileShareFiles = []; // 共有用のFileオブジェクトを保持
+
 async function openTileViewer(tiles) {
   const scroll = document.getElementById('tileViewerScroll');
   scroll.innerHTML = '<div style="color:white; opacity:0.6; padding:20px;">画像を準備中...</div>';
   document.getElementById('tileViewerCounter').textContent = `（全${tiles.length}枚）`;
   document.getElementById('tileViewerModal').classList.add('active');
   
-  // 1枚目を先に表示してから残りを順次追加（待ち時間を体感させない）
+  tileShareFiles = [];
   scroll.innerHTML = '';
   for (let i = 0; i < tiles.length; i++) {
     const blob = await canvasToBlob(tiles[i].canvas);
@@ -2495,9 +2508,36 @@ async function openTileViewer(tiles) {
     img.style.cssText = 'max-width:96vw; width:auto; border-radius:8px; display:block; margin:0 auto 10px auto;';
     img.alt = `タイル${i+1}`;
     scroll.appendChild(img);
-    await yieldToUI(); // 1枚ごとにUIに制御を返す
+    // 共有用のFileオブジェクトを作成
+    tileShareFiles.push(new File([blob], tiles[i].fileName || `tile_${i+1}.jpg`, { type: 'image/jpeg' }));
+    await yieldToUI();
+  }
+  
+  // Web Share APIが使えるか判定してボタンの表示を切り替え
+  const shareBtn = document.getElementById('tileShareBtn');
+  if (navigator.canShare && navigator.canShare({ files: tileShareFiles })) {
+    shareBtn.style.display = '';
+  } else {
+    shareBtn.style.display = 'none'; // 非対応なら隠す（長押し保存に誘導）
   }
 }
+
+// まとめて共有
+document.getElementById('tileShareBtn').addEventListener('click', async () => {
+  if (tileShareFiles.length === 0) return;
+  try {
+    await navigator.share({
+      files: tileShareFiles,
+      title: 'タイル画像',
+      text: 'S-LABO タイル画像',
+    });
+  } catch(e) {
+    if (e.name !== 'AbortError') { // ユーザーキャンセルは無視
+      console.warn('共有失敗:', e);
+      alert('共有できませんでした。画像を長押しして保存してください。');
+    }
+  }
+});
 
 document.getElementById('tileViewerCloseBtn').addEventListener('click', () => {
   document.getElementById('tileViewerModal').classList.remove('active');
