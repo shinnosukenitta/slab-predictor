@@ -2,7 +2,7 @@
 <!--
   ╔══════════════════════════════════════════════════════════╗
   ║  Sラボ投稿フィードフォワードツール                        ║
-  ║  Version: 3.6.0                                          ║
+  ║  Version: 3.7.0                                          ║
   ║  Last Updated: 2026-06-08                                ║
   ║  Author: 真之介 × Claude                                 ║
   ║                                                          ║
@@ -674,7 +674,7 @@ footer {
 
 <div class="container">
   <header>
-    <h1>🎯 S-LABO フィードフォワードツール v3.6.0</h1>
+    <h1>🎯 S-LABO フィードフォワードツール v3.7.0</h1>
     <p>投稿後フィードフォワード診断 ｜ TikTok 3関門モデル ｜ 関門1(フック)→関門2(本編)→関門3(拡散)</p>
   </header>
 
@@ -950,7 +950,7 @@ footer {
     </div>
   </div>
   <footer>
-    <div>S-LABO フィードフォワードツール v3.6.0 | フック0.15秒精細化 | Drive連携 | サンプルDB</div>
+    <div>S-LABO フィードフォワードツール v3.7.0 | フック0.15秒精細化 | Drive連携 | サンプルDB</div>
     <div style="margin-top:6px;">
       <button id="changelogBtn" style="background:none; border:none; color:#667eea; cursor:pointer; font-size:11px; text-decoration:underline;">📋 バージョン履歴を表示</button>
     </div>
@@ -967,6 +967,15 @@ footer {
       <div style="font-size:12px; line-height:1.8; color:#444;">
 
         <div style="background:#e8f0fe; padding:12px; border-radius:8px; margin-bottom:12px; border:2px solid #667eea;">
+          <strong style="color:#667eea;">v3.7.0</strong> <span style="color:#888;">— 2026-06-11</span> ⚡ 高速化<br>
+          ・キャプチャ時にフレームを360px幅へ縮小（フル解像度保持を廃止→メモリ・処理を約1/9に削減）<br>
+          ・seekVideoの固定30ms待機を廃止（onseeked発火時点で即描画）<br>
+          ・UI更新頻度を10→15フレームごとに調整（オーバーヘッド削減）<br>
+          ・比較モードのキャプチャも同様に最適化<br>
+          ・タイル画像・ギャラリーの見え方は変わらず、生成速度のみ向上
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
           <strong style="color:#667eea;">v3.6.0</strong> <span style="color:#888;">— 2026-06-11</span><br>
           ・⚡ フレーム間隔を調整して処理を軽量化（フック0.15→0.2秒、本編0.4→0.5秒）<br>
           ・低スペック環境・他アプリ併用時のタイル生成速度を改善<br>
@@ -2020,7 +2029,6 @@ function generateFrameName(baseName, duration, idx, total, ts) {
 function seekVideo(time) {
   return new Promise((resolve) => {
     let resolved = false;
-    // 重いデバイス対応：タイムアウトを1.5秒に延長
     const timeout = setTimeout(() => {
       if (!resolved) { resolved = true; resolve(); }
     }, 1500);
@@ -2028,8 +2036,7 @@ function seekVideo(time) {
       if (!resolved) {
         resolved = true;
         clearTimeout(timeout);
-        // 描画が確実に反映されるまで待つ
-        setTimeout(resolve, 30);
+        resolve(); // onseeked発火時点でフレーム描画可能。追加待機なし
       }
     };
     video.currentTime = time;
@@ -2077,22 +2084,30 @@ async function processVideos(files) {
     
     progressText.textContent = `[${fileIdx + 1}/${files.length}] 冒頭2秒は0.2秒間隔・以降${baseInterval}秒間隔で${totalCount}フレームをキャプチャ中...`;
     
+    // キャプチャ解像度を計算（フル解像度は不要。タイル240px/ギャラリー用に360px上限で十分）
+    const CAPTURE_MAX_W = 360;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const scale = vw > CAPTURE_MAX_W ? CAPTURE_MAX_W / vw : 1;
+    const capW = Math.round(vw * scale);
+    const capH = Math.round(vh * scale);
+    
     const frames = [];
     for (let i = 0; i < timestamps.length; i++) {
       const ts = timestamps[i];
       await seekVideo(ts);
       const captureCanvas = document.createElement('canvas');
-      captureCanvas.width = video.videoWidth;
-      captureCanvas.height = video.videoHeight;
-      captureCanvas.getContext('2d').drawImage(video, 0, 0);
+      captureCanvas.width = capW;
+      captureCanvas.height = capH;
+      // 縮小しながら描画（フルサイズcanvasを保持しないのでメモリ・速度が大幅改善）
+      captureCanvas.getContext('2d').drawImage(video, 0, 0, capW, capH);
       frames.push({
         timestamp: ts,
         canvas: captureCanvas,
         fileName: generateFrameName(baseName, duration, frames.length, totalCount, ts)
       });
       
-      // 10フレームごとにUI更新
-      if (frames.length % 10 === 0) {
+      // 15フレームごとにUI更新（更新頻度を下げてオーバーヘッド削減）
+      if (frames.length % 15 === 0) {
         const p = (fileIdx + (ts / duration)) / files.length;
         progressFill.style.width = `${p * 90}%`;
         progressText.textContent = `[${fileIdx + 1}/${files.length}] キャプチャ ${frames.length}/${totalCount}（${ts.toFixed(1)}s / ${duration.toFixed(1)}s）`;
@@ -2494,17 +2509,23 @@ async function loadComparePanel(side, file) {
   for (let t = HOOK_END; t < duration; t += baseInterval) timestamps.push(Math.round(t * 100) / 100);
   const frames = [];
   
+  // キャプチャ解像度を縮小（360px上限）
+  const CAPTURE_MAX_W = 360;
+  const cscale = vid.videoWidth > CAPTURE_MAX_W ? CAPTURE_MAX_W / vid.videoWidth : 1;
+  const ccapW = Math.round(vid.videoWidth * cscale);
+  const ccapH = Math.round(vid.videoHeight * cscale);
+  
   for (let i = 0; i < timestamps.length; i++) {
     const ts = timestamps[i];
     await new Promise(r => {
       let done = false;
-      const timer = setTimeout(() => { if (!done) { done = true; r(); } }, 500);
-      vid.onseeked = () => { if (!done) { done = true; clearTimeout(timer); setTimeout(r, 20); } };
+      const timer = setTimeout(() => { if (!done) { done = true; r(); } }, 1500);
+      vid.onseeked = () => { if (!done) { done = true; clearTimeout(timer); r(); } };
       vid.currentTime = ts;
     });
     const c = document.createElement('canvas');
-    c.width = vid.videoWidth; c.height = vid.videoHeight;
-    c.getContext('2d').drawImage(vid, 0, 0);
+    c.width = ccapW; c.height = ccapH;
+    c.getContext('2d').drawImage(vid, 0, 0, ccapW, ccapH);
     frames.push({ ts, canvas: c });
     if (frames.length % 20 === 0) await new Promise(r => setTimeout(r, 0));
   }
