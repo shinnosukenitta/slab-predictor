@@ -2,7 +2,7 @@
 <!--
   ╔══════════════════════════════════════════════════════════╗
   ║  Sラボ投稿フィードフォワードツール                        ║
-  ║  Version: 3.9.0                                          ║
+  ║  Version: 3.9.3                                          ║
   ║  Last Updated: 2026-06-08                                ║
   ║  Author: 真之介 × Claude                                 ║
   ║                                                          ║
@@ -674,7 +674,7 @@ footer {
 
 <div class="container">
   <header>
-    <h1>🎯 S-LABO フィードフォワードツール v3.9.0</h1>
+    <h1>🎯 S-LABO フィードフォワードツール v3.9.3</h1>
     <p>投稿後フィードフォワード診断 ｜ TikTok 3関門モデル ｜ 関門1(フック)→関門2(本編)→関門3(拡散)</p>
   </header>
 
@@ -954,7 +954,7 @@ footer {
     </div>
   </div>
   <footer>
-    <div>S-LABO フィードフォワードツール v3.9.0 | フック0.15秒精細化 | Drive連携 | サンプルDB</div>
+    <div>S-LABO フィードフォワードツール v3.9.3 | フック0.15秒精細化 | Drive連携 | サンプルDB</div>
     <div style="margin-top:6px;">
       <button id="changelogBtn" style="background:none; border:none; color:#667eea; cursor:pointer; font-size:11px; text-decoration:underline;">📋 バージョン履歴を表示</button>
     </div>
@@ -971,6 +971,29 @@ footer {
       <div style="font-size:12px; line-height:1.8; color:#444;">
 
         <div style="background:#e8f0fe; padding:12px; border-radius:8px; margin-bottom:12px; border:2px solid #667eea;">
+          <strong style="color:#667eea;">v3.9.3</strong> <span style="color:#888;">— 2026-06-11</span> ⏱ 遅延対策の改善<br>
+          ・遅延判定を「初回フラグ」→「経過時間ベース」に変更（より正確）<br>
+          ・処理が10秒を超えた時だけ「時間がかかっています」と表示（速い時は通常表示）<br>
+          ・黒フレーム対策を強化：検知時に最大3回リトライ（200→400→800ms）<br>
+          ・遅延の真因はデバイスのビデオデコーダーのコールド状態（端末再起動でリセット、JSからは制御不可）と判明
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
+          <strong style="color:#667eea;">v3.9.2</strong> <span style="color:#888;">— 2026-06-11</span> ⏳ 初回ローディング表示<br>
+          ・1本目だけ「初回はシステムの準備に時間がかかります（30秒程度）」と明示<br>
+          ・2本目以降が速いのはデコーダー/JIT等のウォームアップ完了のため（正常）<br>
+          ・「壊れた？」という不安をなくす体感改善
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
+          <strong style="color:#667eea;">v3.9.1</strong> <span style="color:#888;">— 2026-06-11</span> 🐛 黒フレーム対策<br>
+          ・タイルがブラックアウトするバグを修正（モバイル通信・低速環境で発生）<br>
+          ・原因：シークが1.5秒で打ち切られデコード未完了の黒フレームを取得していた<br>
+          ・シークのタイムアウトを1.5秒→3秒に延長＋黒フレーム検知で自動リトライ<br>
+          ・2回目が速いのは動画がデコードキャッシュされるため（正常な挙動）
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
           <strong style="color:#667eea;">v3.9.0</strong> <span style="color:#888;">— 2026-06-11</span> 📲 iOSまとめて共有<br>
           ・Web Share APIで全タイル画像を一括共有→「画像を保存」で写真アプリにまとめて保存<br>
           ・iOSの共有シート経由なので長押し連打が不要に<br>
@@ -2062,23 +2085,45 @@ function generateFrameName(baseName, duration, idx, total, ts) {
 function seekVideo(time) {
   return new Promise((resolve) => {
     let resolved = false;
+    // タイムアウトを3秒に延長（CPU抑制下のデコード遅延に対応）
     const timeout = setTimeout(() => {
-      if (!resolved) { resolved = true; resolve(); }
-    }, 1500);
+      if (!resolved) { resolved = true; resolve(false); } // false = タイムアウト（デコード未完了の可能性）
+    }, 3000);
     video.onseeked = () => {
       if (!resolved) {
         resolved = true;
         clearTimeout(timeout);
-        resolve(); // onseeked発火時点でフレーム描画可能。追加待機なし
+        resolve(true); // true = 正常にシーク完了
       }
     };
     video.currentTime = time;
   });
 }
 
+// canvasが実質的に真っ黒か判定（デコード未完了フレームの検知）
+function isCanvasBlack(canvas) {
+  try {
+    const ctx = canvas.getContext('2d');
+    // 中央付近の数点をサンプリング（全画素チェックは重いため）
+    const w = canvas.width, h = canvas.height;
+    const points = [[w/2, h/2], [w/4, h/4], [w*3/4, h*3/4], [w/4, h*3/4], [w*3/4, h/4]];
+    let totalBrightness = 0;
+    for (const [x, y] of points) {
+      const d = ctx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data;
+      totalBrightness += d[0] + d[1] + d[2];
+    }
+    // 5点の合計が極端に暗ければ黒フレームと判定
+    return totalBrightness < 30;
+  } catch(e) {
+    return false; // 判定不能なら黒ではないとみなす
+  }
+}
+
 function yieldToUI() {
   return new Promise(resolve => setTimeout(resolve, 0));
 }
+
+let processStartTime = 0; // 処理開始時刻（遅延検知用）
 
 async function processVideos(files) {
   // 前回の処理結果をクリアしてメモリ解放（クラッシュ後の遅延を防ぐ）
@@ -2092,6 +2137,8 @@ async function processVideos(files) {
   
   progress.classList.add('active');
   preview.classList.remove('active');
+  processStartTime = Date.now(); // 処理開始時刻を記録
+  
   const allResults = [];
   
   for (let fileIdx = 0; fileIdx < files.length; fileIdx++) {
@@ -2148,8 +2195,17 @@ async function processVideos(files) {
       const captureCanvas = document.createElement('canvas');
       captureCanvas.width = capW;
       captureCanvas.height = capH;
-      // 縮小しながら描画（フルサイズcanvasを保持しないのでメモリ・速度が大幅改善）
-      captureCanvas.getContext('2d').drawImage(video, 0, 0, capW, capH);
+      const cctx = captureCanvas.getContext('2d');
+      cctx.drawImage(video, 0, 0, capW, capH);
+      
+      // 黒フレーム（デコード未完了）を検知したら段階的にリトライ（最大3回）
+      let retryWait = 200;
+      for (let retry = 0; retry < 3 && isCanvasBlack(captureCanvas); retry++) {
+        await new Promise(r => setTimeout(r, retryWait));
+        cctx.drawImage(video, 0, 0, capW, capH);
+        retryWait *= 2; // 200ms → 400ms → 800ms と待ち時間を増やす
+      }
+      
       frames.push({
         timestamp: ts,
         canvas: captureCanvas,
@@ -2160,7 +2216,13 @@ async function processVideos(files) {
       if (frames.length % 15 === 0) {
         const p = (fileIdx + (ts / duration)) / files.length;
         progressFill.style.width = `${p * 90}%`;
-        progressText.textContent = `[${fileIdx + 1}/${files.length}] キャプチャ ${frames.length}/${totalCount}（${ts.toFixed(1)}s / ${duration.toFixed(1)}s）`;
+        const elapsed = (Date.now() - processStartTime) / 1000;
+        if (elapsed > 10) {
+          // 10秒超：デバイスが遅い状態。安心メッセージを表示
+          progressText.innerHTML = `⏳ 処理に時間がかかっています（${frames.length}/${totalCount}）<br><span style="font-size:12px; opacity:0.8;">通信環境やデバイスの状態により遅くなることがあります。そのままお待ちください</span>`;
+        } else {
+          progressText.textContent = `[${fileIdx + 1}/${files.length}] キャプチャ ${frames.length}/${totalCount}（${ts.toFixed(1)}s / ${duration.toFixed(1)}s）`;
+        }
         await yieldToUI();
       }
     }
