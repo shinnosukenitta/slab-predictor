@@ -2,7 +2,7 @@
 <!--
   ╔══════════════════════════════════════════════════════════╗
   ║  Sラボ投稿フィードフォワードツール                        ║
-  ║  Version: 3.8.0                                          ║
+  ║  Version: 3.8.1                                          ║
   ║  Last Updated: 2026-06-08                                ║
   ║  Author: 真之介 × Claude                                 ║
   ║                                                          ║
@@ -674,7 +674,7 @@ footer {
 
 <div class="container">
   <header>
-    <h1>🎯 S-LABO フィードフォワードツール v3.8.0</h1>
+    <h1>🎯 S-LABO フィードフォワードツール v3.8.1</h1>
     <p>投稿後フィードフォワード診断 ｜ TikTok 3関門モデル ｜ 関門1(フック)→関門2(本編)→関門3(拡散)</p>
   </header>
 
@@ -950,7 +950,7 @@ footer {
     </div>
   </div>
   <footer>
-    <div>S-LABO フィードフォワードツール v3.8.0 | フック0.15秒精細化 | Drive連携 | サンプルDB</div>
+    <div>S-LABO フィードフォワードツール v3.8.1 | フック0.15秒精細化 | Drive連携 | サンプルDB</div>
     <div style="margin-top:6px;">
       <button id="changelogBtn" style="background:none; border:none; color:#667eea; cursor:pointer; font-size:11px; text-decoration:underline;">📋 バージョン履歴を表示</button>
     </div>
@@ -967,6 +967,13 @@ footer {
       <div style="font-size:12px; line-height:1.8; color:#444;">
 
         <div style="background:#e8f0fe; padding:12px; border-radius:8px; margin-bottom:12px; border:2px solid #667eea;">
+          <strong style="color:#667eea;">v3.8.1</strong> <span style="color:#888;">— 2026-06-11</span> ⚡ 描画高速化<br>
+          ・フレームギャラリーの描画を分割実行（20枚ごとにUIへ制御を返す）<br>
+          ・大量フレームでも画面が固まらず、プレビューが先に表示される<br>
+          ・タイルビューア（iOS保存）も1枚ずつ順次表示に変更
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
           <strong style="color:#667eea;">v3.8.0</strong> <span style="color:#888;">— 2026-06-11</span> 📱 iOS一括保存<br>
           ・タイルビューアを「全枚を縦並び表示」に変更<br>
           ・iOSで画像を長押し→「○枚の画像を保存」でまとめて写真アプリに保存可能に<br>
@@ -2217,8 +2224,8 @@ function renderPreviewTile(retryCount = 0) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(firstTile.canvas, 0, 0);
     
-    // フレームギャラリーを構築
-    buildFrameGallery(currentResult[0]);
+    // フレームギャラリーを構築（非同期・プレビュー表示はブロックしない）
+    buildFrameGallery(currentResult[0]).catch(e => console.error('ギャラリー構築エラー:', e));
   } catch (e) {
     console.error('プレビュー描画エラー:', e);
     if (retryCount < 5) {
@@ -2237,15 +2244,18 @@ let gallerySize = 'L'; // S/M/L
 let lightboxIndex = 0;
 let galleryFrames = [];
 
-function buildFrameGallery(result) {
+async function buildFrameGallery(result) {
   galleryFrames = result.frames;
   const grid = document.getElementById('frameGrid');
   const label = document.getElementById('frameCountLabel');
   label.textContent = `（${galleryFrames.length}フレーム / ${result.duration.toFixed(1)}秒 / ${result.stats.interval}秒間隔）`;
   
   grid.innerHTML = '';
+  setGallerySize(gallerySize);
   
-  galleryFrames.forEach((frame, i) => {
+  // 大量フレームでもUIをブロックしないよう、20枚ごとに分割描画
+  for (let i = 0; i < galleryFrames.length; i++) {
+    const frame = galleryFrames[i];
     const isHook = frame.timestamp <= 2.0;
     const wrapper = document.createElement('div');
     wrapper.style.cssText = `position:relative; cursor:pointer; border-radius:6px; overflow:hidden; border:2px solid ${isHook ? '#e74c3c' : '#ddd'}; transition:transform 0.15s;`;
@@ -2254,7 +2264,7 @@ function buildFrameGallery(result) {
     wrapper.onclick = () => openLightbox(i);
     
     const img = document.createElement('img');
-    img.src = frame.canvas.toDataURL('image/jpeg', 0.7);
+    img.src = frame.canvas.toDataURL('image/jpeg', 0.6);
     img.style.cssText = 'width:100%; display:block;';
     img.loading = 'lazy';
     
@@ -2265,9 +2275,10 @@ function buildFrameGallery(result) {
     wrapper.appendChild(img);
     wrapper.appendChild(labelDiv);
     grid.appendChild(wrapper);
-  });
-  
-  setGallerySize(gallerySize);
+    
+    // 20枚ごとにUIに制御を返す（フリーズ防止）
+    if ((i + 1) % 20 === 0) await yieldToUI();
+  }
 }
 
 function setGallerySize(size) {
@@ -2474,14 +2485,18 @@ async function openTileViewer(tiles) {
   document.getElementById('tileViewerCounter').textContent = `（全${tiles.length}枚）`;
   document.getElementById('tileViewerModal').classList.add('active');
   
-  // 全タイルを画像化して縦に並べる
-  const imgs = [];
+  // 1枚目を先に表示してから残りを順次追加（待ち時間を体感させない）
+  scroll.innerHTML = '';
   for (let i = 0; i < tiles.length; i++) {
     const blob = await canvasToBlob(tiles[i].canvas);
     const url = URL.createObjectURL(blob);
-    imgs.push(`<img src="${url}" style="max-width:96vw; width:auto; border-radius:8px; display:block; margin:0 auto 10px auto;" alt="タイル${i+1}">`);
+    const img = document.createElement('img');
+    img.src = url;
+    img.style.cssText = 'max-width:96vw; width:auto; border-radius:8px; display:block; margin:0 auto 10px auto;';
+    img.alt = `タイル${i+1}`;
+    scroll.appendChild(img);
+    await yieldToUI(); // 1枚ごとにUIに制御を返す
   }
-  scroll.innerHTML = imgs.join('');
 }
 
 document.getElementById('tileViewerCloseBtn').addEventListener('click', () => {
