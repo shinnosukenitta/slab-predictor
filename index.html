@@ -2,7 +2,7 @@
 <!--
   ╔══════════════════════════════════════════════════════════╗
   ║  Sラボ投稿フィードフォワードツール                        ║
-  ║  Version: 3.7.1                                          ║
+  ║  Version: 3.8.0                                          ║
   ║  Last Updated: 2026-06-08                                ║
   ║  Author: 真之介 × Claude                                 ║
   ║                                                          ║
@@ -674,7 +674,7 @@ footer {
 
 <div class="container">
   <header>
-    <h1>🎯 S-LABO フィードフォワードツール v3.7.1</h1>
+    <h1>🎯 S-LABO フィードフォワードツール v3.8.0</h1>
     <p>投稿後フィードフォワード診断 ｜ TikTok 3関門モデル ｜ 関門1(フック)→関門2(本編)→関門3(拡散)</p>
   </header>
 
@@ -711,18 +711,18 @@ footer {
         <button class="btn btn-info" id="downloadZipBtn">📦 個別ZIP</button>
         <button class="btn btn-accent" id="goToScoringBtn">🎯 投稿後診断へ</button>
       </div>
-      <!-- iOS向け：画像を画面表示して長押し保存を促すモーダル -->
+      <!-- iOS向け：全タイル画像を縦に並べてまとめて長押し保存 -->
       <div class="modal-overlay" id="tileViewerModal">
-        <div style="position:relative; max-width:96vw; max-height:92vh; text-align:center;">
-          <div style="color:white; font-size:13px; margin-bottom:10px;">
-            📱 画像を<strong>長押し</strong>して「写真に保存」を選択してください
+        <div style="position:relative; width:100%; max-width:96vw; max-height:92vh; display:flex; flex-direction:column;">
+          <div style="color:white; font-size:13px; margin-bottom:10px; text-align:center; flex-shrink:0;">
+            📱 画像を<strong>長押し</strong>→「○枚の画像を保存」でまとめて保存
             <span id="tileViewerCounter" style="margin-left:8px; opacity:0.7;"></span>
           </div>
-          <img id="tileViewerImg" style="max-width:96vw; max-height:80vh; border-radius:8px; display:block; margin:0 auto;">
-          <div style="display:flex; gap:12px; justify-content:center; margin-top:12px;">
-            <button class="btn btn-secondary" id="tileViewerPrevBtn" style="padding:8px 16px;">◀ 前</button>
-            <button class="btn btn-secondary" id="tileViewerCloseBtn" style="padding:8px 16px;">✕ 閉じる</button>
-            <button class="btn btn-primary" id="tileViewerNextBtn" style="padding:8px 16px;">次 ▶</button>
+          <div id="tileViewerScroll" style="overflow-y:auto; flex:1; -webkit-overflow-scrolling:touch; text-align:center; padding-bottom:8px;">
+            <!-- ここに全タイル画像が縦に並ぶ -->
+          </div>
+          <div style="display:flex; gap:12px; justify-content:center; margin-top:12px; flex-shrink:0;">
+            <button class="btn btn-secondary" id="tileViewerCloseBtn" style="padding:8px 24px;">✕ 閉じる</button>
           </div>
         </div>
       </div>
@@ -950,7 +950,7 @@ footer {
     </div>
   </div>
   <footer>
-    <div>S-LABO フィードフォワードツール v3.7.1 | フック0.15秒精細化 | Drive連携 | サンプルDB</div>
+    <div>S-LABO フィードフォワードツール v3.8.0 | フック0.15秒精細化 | Drive連携 | サンプルDB</div>
     <div style="margin-top:6px;">
       <button id="changelogBtn" style="background:none; border:none; color:#667eea; cursor:pointer; font-size:11px; text-decoration:underline;">📋 バージョン履歴を表示</button>
     </div>
@@ -967,6 +967,13 @@ footer {
       <div style="font-size:12px; line-height:1.8; color:#444;">
 
         <div style="background:#e8f0fe; padding:12px; border-radius:8px; margin-bottom:12px; border:2px solid #667eea;">
+          <strong style="color:#667eea;">v3.8.0</strong> <span style="color:#888;">— 2026-06-11</span> 📱 iOS一括保存<br>
+          ・タイルビューアを「全枚を縦並び表示」に変更<br>
+          ・iOSで画像を長押し→「○枚の画像を保存」でまとめて写真アプリに保存可能に<br>
+          ・1枚ずつの「次▶」操作が不要に（解像度はそのまま維持）
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
           <strong style="color:#667eea;">v3.7.1</strong> <span style="color:#888;">— 2026-06-11</span> 🐛 安定化<br>
           ・長尺動画（24分など）でのクラッシュを修正：本編フレーム数に上限280枚を設定<br>
           ・上限を超える長尺は本編間隔を自動拡大（フック区間の精細さは維持）<br>
@@ -2460,37 +2467,31 @@ document.getElementById('downloadTileBtn').addEventListener('click', async () =>
   }
 });
 
-// タイルビューアモーダル（iOS向け）
-let tileViewerTiles = [];
-let tileViewerIdx = 0;
-
+// タイルビューア（iOS向け：全タイルを縦に並べてまとめて保存）
 async function openTileViewer(tiles) {
-  tileViewerTiles = tiles;
-  tileViewerIdx = 0;
-  await updateTileViewer();
+  const scroll = document.getElementById('tileViewerScroll');
+  scroll.innerHTML = '<div style="color:white; opacity:0.6; padding:20px;">画像を準備中...</div>';
+  document.getElementById('tileViewerCounter').textContent = `（全${tiles.length}枚）`;
   document.getElementById('tileViewerModal').classList.add('active');
-}
-
-async function updateTileViewer() {
-  const tile = tileViewerTiles[tileViewerIdx];
-  const blob = await canvasToBlob(tile.canvas);
-  const url = URL.createObjectURL(blob);
-  document.getElementById('tileViewerImg').src = url;
-  document.getElementById('tileViewerCounter').textContent = 
-    `${tileViewerIdx + 1} / ${tileViewerTiles.length}枚`;
-  // 前後ボタンの表示制御
-  document.getElementById('tileViewerPrevBtn').style.opacity = tileViewerIdx > 0 ? '1' : '0.3';
-  document.getElementById('tileViewerNextBtn').style.opacity = tileViewerIdx < tileViewerTiles.length - 1 ? '1' : '0.3';
+  
+  // 全タイルを画像化して縦に並べる
+  const imgs = [];
+  for (let i = 0; i < tiles.length; i++) {
+    const blob = await canvasToBlob(tiles[i].canvas);
+    const url = URL.createObjectURL(blob);
+    imgs.push(`<img src="${url}" style="max-width:96vw; width:auto; border-radius:8px; display:block; margin:0 auto 10px auto;" alt="タイル${i+1}">`);
+  }
+  scroll.innerHTML = imgs.join('');
 }
 
 document.getElementById('tileViewerCloseBtn').addEventListener('click', () => {
   document.getElementById('tileViewerModal').classList.remove('active');
-});
-document.getElementById('tileViewerPrevBtn').addEventListener('click', async () => {
-  if (tileViewerIdx > 0) { tileViewerIdx--; await updateTileViewer(); }
-});
-document.getElementById('tileViewerNextBtn').addEventListener('click', async () => {
-  if (tileViewerIdx < tileViewerTiles.length - 1) { tileViewerIdx++; await updateTileViewer(); }
+  // メモリ解放：表示中の画像URLを破棄
+  const scroll = document.getElementById('tileViewerScroll');
+  scroll.querySelectorAll('img').forEach(img => {
+    if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+  });
+  scroll.innerHTML = '';
 });
 
 document.getElementById('downloadZipBtn').addEventListener('click', async () => {
