@@ -2,7 +2,7 @@
 <!--
   ╔══════════════════════════════════════════════════════════╗
   ║  Sラボ投稿フィードフォワードツール                        ║
-  ║  Version: 3.7.0                                          ║
+  ║  Version: 3.7.1                                          ║
   ║  Last Updated: 2026-06-08                                ║
   ║  Author: 真之介 × Claude                                 ║
   ║                                                          ║
@@ -674,7 +674,7 @@ footer {
 
 <div class="container">
   <header>
-    <h1>🎯 S-LABO フィードフォワードツール v3.7.0</h1>
+    <h1>🎯 S-LABO フィードフォワードツール v3.7.1</h1>
     <p>投稿後フィードフォワード診断 ｜ TikTok 3関門モデル ｜ 関門1(フック)→関門2(本編)→関門3(拡散)</p>
   </header>
 
@@ -950,7 +950,7 @@ footer {
     </div>
   </div>
   <footer>
-    <div>S-LABO フィードフォワードツール v3.7.0 | フック0.15秒精細化 | Drive連携 | サンプルDB</div>
+    <div>S-LABO フィードフォワードツール v3.7.1 | フック0.15秒精細化 | Drive連携 | サンプルDB</div>
     <div style="margin-top:6px;">
       <button id="changelogBtn" style="background:none; border:none; color:#667eea; cursor:pointer; font-size:11px; text-decoration:underline;">📋 バージョン履歴を表示</button>
     </div>
@@ -967,6 +967,14 @@ footer {
       <div style="font-size:12px; line-height:1.8; color:#444;">
 
         <div style="background:#e8f0fe; padding:12px; border-radius:8px; margin-bottom:12px; border:2px solid #667eea;">
+          <strong style="color:#667eea;">v3.7.1</strong> <span style="color:#888;">— 2026-06-11</span> 🐛 安定化<br>
+          ・長尺動画（24分など）でのクラッシュを修正：本編フレーム数に上限280枚を設定<br>
+          ・上限を超える長尺は本編間隔を自動拡大（フック区間の精細さは維持）<br>
+          ・各動画処理後にcanvas・blob URL・video要素を明示的に解放<br>
+          ・処理開始時に前回の結果をクリア（クラッシュ後に遅くなる問題を解消）
+        </div>
+
+        <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:12px;">
           <strong style="color:#667eea;">v3.7.0</strong> <span style="color:#888;">— 2026-06-11</span> ⚡ 高速化<br>
           ・キャプチャ時にフレームを360px幅へ縮小（フル解像度保持を廃止→メモリ・処理を約1/9に削減）<br>
           ・seekVideoの固定30ms待機を廃止（onseeked発火時点で即描画）<br>
@@ -2048,6 +2056,15 @@ function yieldToUI() {
 }
 
 async function processVideos(files) {
+  // 前回の処理結果をクリアしてメモリ解放（クラッシュ後の遅延を防ぐ）
+  if (currentResult) {
+    currentResult.forEach(r => {
+      if (r.frames) r.frames.forEach(f => { if (f.canvas) { f.canvas.width = 0; f.canvas.height = 0; } });
+      if (r.tiles) r.tiles.forEach(t => { if (t.canvas) { t.canvas.width = 0; t.canvas.height = 0; } });
+    });
+    currentResult = null;
+  }
+  
   progress.classList.add('active');
   preview.classList.remove('active');
   const allResults = [];
@@ -2068,9 +2085,17 @@ async function processVideos(files) {
     
     const duration = video.duration;
     const renamedFileName = generateRenamedName(baseName, duration, ext);
-    const baseInterval = duration <= 90 ? 0.5 : 0.6;
     const HOOK_END = 2.0;       // 冒頭2秒まで
     const HOOK_INTERVAL = 0.2;  // フックは0.2秒間隔
+    const MAX_BODY_FRAMES = 280; // 本編フレーム数の上限（メモリ保護）
+    
+    // 本編の間隔を計算（基本0.5/0.6秒だが、上限を超える長尺は自動で広げる）
+    let baseInterval = duration <= 90 ? 0.5 : 0.6;
+    const bodyDuration = Math.max(0, duration - HOOK_END);
+    if (bodyDuration / baseInterval > MAX_BODY_FRAMES) {
+      baseInterval = bodyDuration / MAX_BODY_FRAMES; // 上限に収まるよう間隔を拡大
+      console.log(`長尺動画(${(duration/60).toFixed(1)}分)のため本編間隔を${baseInterval.toFixed(2)}秒に自動調整`);
+    }
     
     // キャプチャするタイムスタンプのリストを生成（冒頭2秒は細かく、以降は通常間隔）
     const timestamps = [];
@@ -2128,12 +2153,16 @@ async function processVideos(files) {
       renamedFileName, renamedBlob: file, frames, tiles,
       stats: {
         totalFrames: frames.length,
-        interval: baseInterval,
+        interval: Math.round(baseInterval * 100) / 100,
         hookFrames: frames.filter(f => f.timestamp <= 2.0).length,
         tileCount: tiles.length,
       }
     });
+    // メモリ解放：blob URLを破棄し、video要素をクリア
     URL.revokeObjectURL(url);
+    video.removeAttribute('src');
+    video.load();
+    await yieldToUI(); // GCの機会を与える
   }
   
   progressFill.style.width = '100%';
